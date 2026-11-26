@@ -27,11 +27,13 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   font-size: 14px;
 }
 
-#share {
+.hud-right { display: flex; gap: 6px; }
+
+#hud button {
   background: #2a2640;
   color: inherit;
   border: 0;
@@ -39,6 +41,9 @@ body {
   padding: 6px 10px;
   font: inherit;
 }
+
+#rotate { display: none; opacity: 0.7; }
+@media (orientation: portrait) { #rotate { display: inline; } }
 
 #stage {
   flex: 1;
@@ -55,33 +60,39 @@ body {
   border-radius: 6px;
 }
 
+/* Controls float over the bottom corners: d-pad left, jump right */
 #controls {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: env(safe-area-inset-bottom);
   display: flex;
   justify-content: space-between;
-  padding: 12px 16px 16px;
+  align-items: flex-end;
+  padding: 0 calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
+  pointer-events: none;
 }
-
 #controls[hidden] { display: none; }
 
+#dpad, #jump { pointer-events: auto; }
+
+#dpad { display: flex; gap: 8px; }
+
 .ctl {
-  width: 96px;
-  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 84px;
+  height: 84px;
   border-radius: 50%;
   border: 0;
-  background: #2a2640;
+  background: rgba(42, 38, 64, 0.85);
   color: #eee;
-  font-size: 36px;
+  font-size: 32px;
   -webkit-tap-highlight-color: transparent;
 }
 
-.ctl.active { background: #4a4470; }
+.ctl.active { background: rgba(90, 82, 140, 0.95); }
 
-/* Landscape phones: overlay the buttons on the stage to save vertical space */
 @media (orientation: landscape) and (max-height: 500px) {
-  #controls {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    pointer-events: none;
-  }
-  .ctl { pointer-events: auto; opacity: 0.8; width: 80px; height: 80px; }
+  .ctl { width: 72px; height: 72px; font-size: 28px; opacity: 0.85; }
 }

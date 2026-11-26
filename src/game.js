@@ -1,17 +1,18 @@
-// Pure game state + physics. No I/O, so it can be unit tested.
+// Room state: who controls which character, their inputs, and the physics world.
+// No I/O here, so it can be unit tested.
 
-const WORLD = { width: 960, height: 540, floorY: 460 };
-const PLAYER = { width: 40, height: 60, speed: 240 }; // speed in px/sec
+const P = require('../shared/physics');
+const DEFAULT_LEVEL = require('../levels/test-01.json');
+
 const ROLES = ['fire', 'water'];
 
-function createRoom(code) {
-  return {
-    code,
-    players: {
-      fire: { x: 200, y: WORLD.floorY - PLAYER.height, dir: 0, socketId: null },
-      water: { x: 720, y: WORLD.floorY - PLAYER.height, dir: 0, socketId: null },
-    },
-  };
+function createRoom(code, levelDef = DEFAULT_LEVEL) {
+  const level = P.parseLevel(levelDef);
+  const players = {};
+  for (const role of ROLES) {
+    players[role] = { body: P.createBody(level.spawns[role]), input: { left: false, right: false }, socketId: null };
+  }
+  return { code, levelDef, level, players };
 }
 
 // Assign the first free role, or null if the room is full (spectator).
@@ -30,7 +31,7 @@ function leave(room, socketId) {
     const p = room.players[role];
     if (p.socketId === socketId) {
       p.socketId = null;
-      p.dir = 0;
+      p.input = { left: false, right: false };
     }
   }
 }
@@ -43,24 +44,30 @@ function isEmpty(room) {
 function setInput(room, role, dir) {
   if (!ROLES.includes(role)) return;
   if (dir !== -1 && dir !== 0 && dir !== 1) return;
-  room.players[role].dir = dir;
+  room.players[role].input = { left: dir === -1, right: dir === 1 };
 }
 
-function step(room, dt) {
-  for (const role of ROLES) {
-    const p = room.players[role];
-    p.x += p.dir * PLAYER.speed * dt;
-    p.x = Math.max(0, Math.min(WORLD.width - PLAYER.width, p.x));
-  }
+function jump(room, role) {
+  if (!ROLES.includes(role)) return;
+  P.pressJump(room.players[role].body);
+}
+
+// Advance one fixed physics step.
+function step(room) {
+  P.stepWorld(
+    room.level,
+    ROLES.map((r) => room.players[r].body),
+    ROLES.map((r) => room.players[r].input),
+  );
 }
 
 function snapshot(room) {
   const out = {};
   for (const role of ROLES) {
-    const { x, y, dir, socketId } = room.players[role];
-    out[role] = { x, y, dir, connected: !!socketId };
+    const { body, socketId } = room.players[role];
+    out[role] = { x: body.x, y: body.y, vx: body.vx, vy: body.vy, onGround: body.onGround, connected: !!socketId };
   }
   return out;
 }
 
-module.exports = { WORLD, PLAYER, ROLES, createRoom, join, leave, isEmpty, setInput, step, snapshot };
+module.exports = { ROLES, createRoom, join, leave, isEmpty, setInput, jump, step, snapshot };
