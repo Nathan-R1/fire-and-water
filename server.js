@@ -13,7 +13,7 @@ const ROOM_CODE_RE = /^[A-Z0-9]{4,8}$/;
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/shared', express.static(path.join(__dirname, 'shared')));
-app.get('/healthz', (_req, res) => res.json({ ok: true, db: db.enabled }));
+app.get('/healthz', (_req, res) => res.json({ ok: true, db: db.enabled, levels: game.LEVELS.length }));
 
 const server = http.createServer(app);
 const io = new Server(server);
@@ -24,21 +24,28 @@ io.on('connection', (socket) => {
   let room = null;
   let role = null;
 
-  socket.on('join', (rawCode) => {
+  // msg: { code, level? } — level (1-based) only applies when the room is new.
+  socket.on('join', (msg) => {
     if (room) return; // one room per socket
-    const code = String(rawCode || '').toUpperCase();
+    const code = String((msg && msg.code) || '').toUpperCase();
     if (!ROOM_CODE_RE.test(code)) return socket.emit('error-msg', 'Invalid room code');
 
     let entry = rooms.get(code);
     if (!entry) {
-      entry = { state: game.createRoom(code), dbId: null };
+      const startIndex = msg && Number.isInteger(msg.level) ? msg.level - 1 : 0;
+      entry = { state: game.createRoom(code, { startIndex }), dbId: null };
+      game.takeEvents(entry.state); // initial 'level' event is covered by 'joined'
       rooms.set(code, entry);
       db.roomCreated(code).then((id) => { entry.dbId = id; });
     }
     room = entry;
     role = game.join(room.state, socket.id);
     socket.join(code);
-    socket.emit('joined', { code, role, level: room.state.levelDef, char: P.CHAR, tile: P.TILE });
+    const s = room.state;
+    socket.emit('joined', {
+      code, role, char: P.CHAR, tile: P.TILE,
+      level: { index: s.levelIndex, total: s.levels.length, def: s.levelDef },
+    });
   });
 
   socket.on('input', (dir) => {
@@ -47,6 +54,10 @@ io.on('connection', (socket) => {
 
   socket.on('jump', () => {
     if (room && role) game.jump(room.state, role);
+  });
+
+  socket.on('restart', () => {
+    if (room && role) game.restart(room.state);
   });
 
   socket.on('disconnect', () => {
@@ -60,7 +71,7 @@ io.on('connection', (socket) => {
 });
 
 // Fixed-timestep loop: physics at exactly 60 Hz regardless of timer jitter,
-// snapshots at ~30 Hz.
+// snapshots at ~30 Hz, events as soon as they happen.
 let last = performance.now();
 let acc = 0;
 let lastSnapshot = 0;
@@ -71,6 +82,9 @@ setInterval(() => {
   while (acc >= P.DT) {
     for (const { state } of rooms.values()) game.step(state);
     acc -= P.DT;
+  }
+  for (const { state } of rooms.values()) {
+    for (const e of game.takeEvents(state)) io.to(state.code).emit('event', e);
   }
   if (now - lastSnapshot >= SNAPSHOT_MS) {
     lastSnapshot = now;

@@ -1,17 +1,30 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const P = require('../shared/physics');
 const g = require('../src/game');
 
+const LV = (id, rows) => ({ id, name: id, rows });
+// Each character spawns one tile from its door: fire walks left, water walks right.
+const L1 = LV('one', ['########', '#......#', '#fF..Ww#', '########']);
+const L2 = LV('two', ['########', '#......#', '#F.W.fw#', '########']);
+// Water spawns next to a lava pool.
+const LAVA = LV('lava', ['########', '#......#', '#F.fwW.#', '######L#']);
+
+const room = () => g.createRoom('ABCD', { levels: [L2] });
+
+test('there are 32 levels and they all load', () => {
+  assert.equal(g.LEVELS.length, 32);
+  for (let i = 0; i < g.LEVELS.length; i++) g.createRoom('X', { startIndex: i });
+});
+
 test('first two joiners get fire then water, third spectates', () => {
-  const r = g.createRoom('ABCD');
+  const r = room();
   assert.equal(g.join(r, 'a'), 'fire');
   assert.equal(g.join(r, 'b'), 'water');
   assert.equal(g.join(r, 'c'), null);
 });
 
 test('freed slot is reused and its input cleared', () => {
-  const r = g.createRoom('ABCD');
+  const r = room();
   g.join(r, 'a'); g.join(r, 'b');
   g.setInput(r, 'fire', 1);
   g.leave(r, 'a');
@@ -19,38 +32,55 @@ test('freed slot is reused and its input cleared', () => {
   assert.equal(g.join(r, 'c'), 'fire');
 });
 
-test('walking right moves the character', () => {
-  const r = g.createRoom('ABCD');
-  for (let i = 0; i < 10; i++) g.step(r);
-  const x0 = r.players.water.body.x;
-  g.setInput(r, 'water', 1);
-  for (let i = 0; i < 30; i++) g.step(r);
-  assert.ok(r.players.water.body.x > x0 + 50);
-});
-
-test('jump leaves the ground', () => {
-  const r = g.createRoom('ABCD');
-  for (let i = 0; i < 10; i++) g.step(r);
-  const y0 = r.players.water.body.y;
-  g.jump(r, 'water');
-  for (let i = 0; i < 10; i++) g.step(r);
-  assert.ok(r.players.water.body.y < y0 - 30);
-});
-
 test('rejects bad input', () => {
-  const r = g.createRoom('ABCD');
+  const r = room();
   g.setInput(r, 'fire', 5);
   g.setInput(r, 'nope', 1);
   g.jump(r, 'nope');
   assert.deepEqual(r.players.fire.input, { left: false, right: false });
 });
 
-test('snapshot has positions and connection flags', () => {
-  const r = g.createRoom('ABCD');
+test('both in their doors completes the level and moves to the next', () => {
+  const r = g.createRoom('ABCD', { levels: [L1, L2] });
+  g.takeEvents(r);
+  g.setInput(r, 'fire', -1);
+  g.setInput(r, 'water', 1);
+  for (let i = 0; i < 40; i++) g.step(r);
+  g.setInput(r, 'fire', 0);
+  g.setInput(r, 'water', 0);
+  for (let i = 0; i < g.TICKS.exitHold + 30 && r.phase === 'playing'; i++) g.step(r);
+  assert.equal(r.phase, 'complete');
+  const done = g.takeEvents(r).find((e) => e.type === 'complete');
+  assert.equal(done.index, 0);
+  for (let i = 0; i < g.TICKS.completePause; i++) g.step(r);
+  assert.equal(r.levelIndex, 1);
+  assert.equal(r.levelDef.id, 'two');
+  assert.equal(r.phase, 'playing');
+});
+
+test('a death restarts the level for both after a pause', () => {
+  const r = g.createRoom('ABCD', { levels: [LAVA] });
+  g.takeEvents(r);
+  g.setInput(r, 'water', 1);
+  let dead = false;
+  for (let i = 0; i < 60 && !dead; i++) { g.step(r); dead = r.phase === 'dead'; }
+  assert.ok(dead, 'water died');
+  const ev = g.takeEvents(r).find((e) => e.type === 'death');
+  assert.equal(ev.role, 'water');
+  r.players.fire.body.x = 999;
+  for (let i = 0; i < g.TICKS.deathPause; i++) g.step(r);
+  assert.equal(r.phase, 'playing');
+  assert.equal(r.players.fire.body.x, r.level.spawns.fire.x, 'fire reset too');
+  assert.equal(r.deaths, 1);
+});
+
+test('snapshot includes level, phase and mechanism state', () => {
+  const r = g.createRoom('ABCD', { levels: [L2] });
   g.join(r, 'a');
   const s = g.snapshot(r);
   assert.equal(s.fire.connected, true);
   assert.equal(s.water.connected, false);
-  assert.equal(typeof s.fire.y, 'number');
-  assert.ok(P.DT > 0);
+  assert.equal(s.level, 0);
+  assert.equal(s.phase, 'playing');
+  assert.ok(Array.isArray(s.gates));
 });

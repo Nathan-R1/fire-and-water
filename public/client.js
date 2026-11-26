@@ -2,8 +2,10 @@
   const $ = (id) => document.getElementById(id);
   const canvas = $('game');
   const ctx = canvas.getContext('2d');
+  const { T } = Physics;
 
   // ---- Room code: from ?room=, otherwise make one and put it in the URL ----
+  // ?level=N starts a new room at level N (handy for testing).
   const params = new URLSearchParams(location.search);
   let code = (params.get('room') || '').toUpperCase();
   if (!/^[A-Z0-9]{4,8}$/.test(code)) {
@@ -12,13 +14,14 @@
     params.set('room', code);
     history.replaceState(null, '', `${location.pathname}?${params}`);
   }
+  const startLevel = parseInt(params.get('level'), 10) || undefined;
   $('code').textContent = code;
 
   $('share').addEventListener('click', async () => {
-    const url = location.href;
+    const url = `${location.origin}${location.pathname}?room=${code}`;
     try {
       if (navigator.share) await navigator.share({ title: 'Fire & Water', url });
-      else { await navigator.clipboard.writeText(url); $('status').textContent = 'Link copied'; }
+      else { await navigator.clipboard.writeText(url); flashStatus('Link copied'); }
     } catch { /* user cancelled */ }
   });
 
@@ -34,41 +37,110 @@
     });
   }
 
-  // ---- Networking ----
-  let level = null;  // parsed level (for drawing tiles)
+  // ---- State ----
+  let level = null;     // parsed level
+  let levelIndex = 0;
+  let levelTotal = 0;
   let CHAR = Physics.CHAR;
   let TILE = Physics.TILE;
   let myRole = null;
-  let target = null; // latest server snapshot
-  let shown = null;  // smoothed positions we draw
+  let target = null;    // latest server snapshot
+  let shown = null;     // smoothed character positions we draw
+  let statusOverride = null;
 
+  function setLevel(info) {
+    level = Physics.parseLevel(info.def);
+    levelIndex = info.index;
+    levelTotal = info.total;
+    target = null;
+    shown = null;
+    $('levelnum').textContent = `${levelIndex + 1}/${levelTotal}`;
+    $('levelname').textContent = level.name;
+    resizeCanvas();
+    showBanner(`<b>Level ${levelIndex + 1}</b>${escapeHtml(level.name)}`, 1800);
+  }
+
+  // ---- Networking ----
   const socket = io();
-  socket.on('connect', () => socket.emit('join', code));
+  socket.on('connect', () => socket.emit('join', { code, level: startLevel }));
   socket.on('disconnect', () => { $('status').textContent = 'Reconnecting…'; });
   socket.on('error-msg', (msg) => { $('status').textContent = msg; });
 
   socket.on('joined', (msg) => {
-    level = Physics.parseLevel(msg.level);
     CHAR = msg.char;
     TILE = msg.tile;
     myRole = msg.role;
-    resizeCanvas();
+    setLevel(msg.level);
     $('controls').hidden = !myRole;
+    $('restart').hidden = !myRole;
     sentDir = 0;
     updateStatus();
   });
 
   socket.on('state', (s) => {
+    if (!level || s.level !== levelIndex) return; // level change in flight
     target = s;
     if (!shown) shown = { fire: { x: s.fire.x, y: s.fire.y }, water: { x: s.water.x, y: s.water.y } };
+    $('timer').textContent = formatTime(s.timeMs);
+    const mine = (el) => level.gems.filter((g, i) => g.el === el && s.gems[i]).length;
+    const total = (el) => level.gems.filter((g) => g.el === el).length;
+    $('gemcount').textContent = `🔴${mine('fire')}/${total('fire')} 🔵${mine('water')}/${total('water')}`;
     updateStatus();
   });
 
+  const CAUSE = { [T.LAVA]: 'lava', [T.WATER]: 'water', [T.ACID]: 'acid' };
+  socket.on('event', (e) => {
+    if (e.type === 'level') {
+      setLevel(e);
+    } else if (e.type === 'death') {
+      const who = e.role === 'fire' ? '🔥 Fire' : '💧 Water';
+      showBanner(`<b>Oops!</b>${who} fell in the ${CAUSE[e.cause] || 'hazard'}`, 1000);
+      if (e.role === myRole) navigator.vibrate?.([40, 40, 80]);
+    } else if (e.type === 'restart') {
+      shown = null;
+    } else if (e.type === 'gem') {
+      if (e.role === myRole) navigator.vibrate?.(15);
+    } else if (e.type === 'complete') {
+      const gems = e.totalGems ? ` · 💎 ${e.gems}/${e.totalGems}` : '';
+      const deaths = e.deaths ? ` · ${e.deaths} ${e.deaths === 1 ? 'retry' : 'retries'}` : '';
+      const next = e.last ? 'That was the last level! Back to level 1…' : 'Next level coming up…';
+      showBanner(`<b>Level ${e.index + 1} complete!</b>⏱ ${formatTime(e.timeMs)}${gems}${deaths}<br>${next}`, 3000);
+      navigator.vibrate?.([30, 50, 30, 50, 60]);
+    }
+  });
+
+  $('restart').addEventListener('click', () => socket.emit('restart'));
+
   function updateStatus() {
+    if (statusOverride) return;
     if (!myRole) { $('status').textContent = 'Room full: watching'; return; }
     const other = myRole === 'fire' ? 'water' : 'fire';
     const waiting = target && !target[other].connected;
-    $('status').textContent = `You are ${myRole === 'fire' ? '🔥 Fire' : '💧 Water'}${waiting ? ' · waiting for partner' : ''}`;
+    $('status').textContent = `${myRole === 'fire' ? '🔥 Fire' : '💧 Water'}${waiting ? ' · waiting for partner' : ''}`;
+  }
+
+  function flashStatus(text) {
+    statusOverride = text;
+    $('status').textContent = text;
+    setTimeout(() => { statusOverride = null; updateStatus(); }, 1500);
+  }
+
+  let bannerTimer = null;
+  function showBanner(html, ms) {
+    const b = $('banner');
+    b.innerHTML = html;
+    b.hidden = false;
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => { b.hidden = true; }, ms);
+  }
+
+  function formatTime(ms) {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
   // ---- Input ----
@@ -132,6 +204,7 @@
     const d = keyDir[e.code];
     if (d) { keyDirs.delete(d); keyDirs.add(d); sendDir(); }
     if (jumpKeys.has(e.code)) { e.preventDefault(); if (myRole) socket.emit('jump'); }
+    if (e.code === 'KeyR' && myRole) socket.emit('restart');
   });
   addEventListener('keyup', (e) => {
     const d = keyDir[e.code];
@@ -140,37 +213,164 @@
   addEventListener('blur', () => { keyDirs.clear(); touchDirs.clear(); sendDir(); });
 
   // ---- Rendering ----
-  const COLORS = { fire: '#ff6a2b', water: '#2bb0ff' };
+  const COLORS = {
+    fire: '#ff6a2b', water: '#2bb0ff',
+    bg: '#1e1b2e', rock: '#3a3552', rockTop: '#5b5480',
+    [T.LAVA]: '#ff5a1f', [T.WATER]: '#1f8fff', [T.ACID]: '#5fd35a',
+  };
   let scale = 1;
+  let staticLayer = null; // pre-rendered tiles for the current level
 
   function resizeCanvas() {
     if (!level) return;
     scale = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = level.pxWidth * scale;
     canvas.height = level.pxHeight * scale;
+    staticLayer = renderStatic();
   }
   addEventListener('resize', resizeCanvas);
 
-  function drawLevel() {
-    ctx.fillStyle = '#1e1b2e';
-    ctx.fillRect(0, 0, level.pxWidth, level.pxHeight);
+  // Rock and fan shafts don't change during a level, so draw them once.
+  function renderStatic() {
+    const c = document.createElement('canvas');
+    c.width = canvas.width;
+    c.height = canvas.height;
+    const g = c.getContext('2d');
+    g.setTransform(scale, 0, 0, scale, 0, 0);
+    g.fillStyle = COLORS.bg;
+    g.fillRect(0, 0, level.pxWidth, level.pxHeight);
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
-        if (!Physics.isSolid(level, tx, ty)) continue;
+        const t = Physics.tileAt(level, tx, ty);
         const x = tx * TILE, y = ty * TILE;
-        ctx.fillStyle = '#3a3552';
-        ctx.fillRect(x, y, TILE, TILE);
-        if (!Physics.isSolid(level, tx, ty - 1)) { // exposed top edge
-          ctx.fillStyle = '#5b5480';
-          ctx.fillRect(x, y, TILE, 4);
+        if (t === T.SOLID) {
+          g.fillStyle = COLORS.rock;
+          g.fillRect(x, y, TILE, TILE);
+          if (!Physics.isSolid(level, tx, ty - 1)) { g.fillStyle = COLORS.rockTop; g.fillRect(x, y, TILE, 4); }
+        } else if (t === T.LAVA || t === T.WATER || t === T.ACID) {
+          g.fillStyle = COLORS.rock;
+          g.fillRect(x, y, TILE, TILE);
+        } else if (t === T.FAN) {
+          g.fillStyle = 'rgba(200, 230, 255, 0.07)';
+          g.fillRect(x, y, TILE, TILE);
+          if (Physics.isSolid(level, tx, ty + 1)) { // fan unit at the base of the shaft
+            g.fillStyle = '#8a86a8';
+            g.fillRect(x + 1, y + TILE - 6, TILE - 2, 6);
+          }
         }
+      }
+    }
+    // Doors
+    for (const role of ['fire', 'water']) {
+      const e = level.exits[role];
+      const x = e.tx * TILE, y = e.ty * TILE - TILE;
+      g.fillStyle = '#2a2640';
+      g.fillRect(x - 2, y - 2, TILE + 4, TILE * 2 + 2);
+      g.fillStyle = role === 'fire' ? '#7a2a12' : '#123f7a';
+      g.fillRect(x + 1, y + 1, TILE - 2, TILE * 2 - 1);
+      g.fillStyle = COLORS[role];
+      g.font = `${TILE * 0.6}px system-ui`;
+      g.textAlign = 'center';
+      g.fillText(role === 'fire' ? '♨' : '≈', x + TILE / 2, y + TILE * 0.9);
+    }
+    return c;
+  }
+
+  function drawPools(now) {
+    for (let ty = 0; ty < level.height; ty++) {
+      for (let tx = 0; tx < level.width; tx++) {
+        const t = Physics.tileAt(level, tx, ty);
+        if (t !== T.LAVA && t !== T.WATER && t !== T.ACID) continue;
+        const wave = Math.sin(now / 300 + tx * 1.3) * 1.5;
+        ctx.fillStyle = COLORS[t];
+        ctx.fillRect(tx * TILE, ty * TILE + 3 + wave, TILE, TILE / 2 - wave);
       }
     }
   }
 
-  function drawChar(role, p, t) {
+  function drawFanAir(now) {
+    ctx.fillStyle = 'rgba(220, 240, 255, 0.35)';
+    for (let ty = 0; ty < level.height; ty++) {
+      for (let tx = 0; tx < level.width; tx++) {
+        if (Physics.tileAt(level, tx, ty) !== T.FAN) continue;
+        const off = (now / 8 + tx * 7) % TILE;
+        ctx.fillRect(tx * TILE + 6, ty * TILE + TILE - off, 2, 5);
+        ctx.fillRect(tx * TILE + 16, ty * TILE + ((TILE - off + 12) % TILE), 2, 5);
+      }
+    }
+  }
+
+  const CH_COLORS = ['#ffd84a', '#c77dff', '#4af0d8', '#ff7ab8', '#a0e060'];
+  const chColor = (ch) => CH_COLORS[(ch - 1) % CH_COLORS.length];
+
+  function drawMechanisms(s) {
+    level.gates.forEach((gt, i) => {
+      const { x, y, w, h } = gt.rect;
+      ctx.strokeStyle = chColor(gt.ch);
+      ctx.lineWidth = 2;
+      if (s.gates[i]) {
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = '#4b4566';
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = chColor(gt.ch);
+        if (w >= h) for (let px = x + 4; px < x + w; px += 8) ctx.fillRect(px, y + h / 2 - 1, 4, 2);
+        else for (let py = y + 4; py < y + h; py += 8) ctx.fillRect(x + w / 2 - 1, py, 2, 4);
+      }
+    });
+    level.plates.forEach((p, i) => {
+      const { x, y, w } = p.rect;
+      const down = s.plates[i];
+      ctx.fillStyle = chColor(p.ch);
+      ctx.fillRect(x, y + (down ? 4 : 1), w, down ? 2 : 5);
+    });
+    level.levers.forEach((l, i) => {
+      const cx = l.tx * TILE + TILE / 2, base = (l.ty + 1) * TILE;
+      const on = s.levers[i];
+      ctx.fillStyle = '#8a86a8';
+      ctx.fillRect(cx - 6, base - 4, 12, 4);
+      ctx.strokeStyle = chColor(l.ch);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx, base - 3);
+      const lean = (on ? 1 : -1) * l.dir;
+      ctx.lineTo(cx + lean * 9, base - 15);
+      ctx.stroke();
+      // arrow showing which way to walk through it
+      ctx.fillStyle = chColor(l.ch);
+      ctx.globalAlpha = on ? 0.3 : 0.8;
+      ctx.beginPath();
+      const ax = cx + l.dir * 2, ay = base - 22;
+      ctx.moveTo(ax + l.dir * 5, ay);
+      ctx.lineTo(ax - l.dir * 3, ay - 4);
+      ctx.lineTo(ax - l.dir * 3, ay + 4);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  function drawGems(s, now) {
+    level.gems.forEach((g, i) => {
+      if (s.gems[i]) return;
+      const cx = g.tx * TILE + TILE / 2, cy = g.ty * TILE + TILE / 2 + Math.sin(now / 250 + i) * 2;
+      ctx.fillStyle = g.el === 'fire' ? '#ff4d4d' : '#4da6ff';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 7);
+      ctx.lineTo(cx + 6, cy);
+      ctx.lineTo(cx, cy + 7);
+      ctx.lineTo(cx - 6, cy);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillRect(cx - 2, cy - 3, 2, 2);
+    });
+  }
+
+  function drawChar(role, p, t, s) {
     const { width: w, height: h } = CHAR;
-    ctx.globalAlpha = t.connected ? 1 : 0.3;
+    const dead = s.phase === 'dead';
+    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : 1;
     ctx.fillStyle = COLORS[role];
     ctx.fillRect(p.x, p.y, w, h);
     // Eyes look the way you're moving
@@ -193,11 +393,17 @@
     requestAnimationFrame(frame);
     const dt = Math.min((now - lastFrame) / 1000, 0.1);
     lastFrame = now;
-    if (!level) return;
+    if (!level || !staticLayer) return;
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(staticLayer, 0, 0);
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    drawLevel();
-    if (!target || !shown) return;
+    drawPools(now);
+    drawFanAir(now);
+    if (!target) return;
+    drawMechanisms(target);
+    drawGems(target, now);
+    if (!shown) return;
 
     // Ease toward the server position to hide the 30 Hz steps.
     // (M2 replaces this with prediction for your own character.)
@@ -205,7 +411,7 @@
     for (const role of ['fire', 'water']) {
       shown[role].x += (target[role].x - shown[role].x) * k;
       shown[role].y += (target[role].y - shown[role].y) * k;
-      drawChar(role, shown[role], target[role]);
+      drawChar(role, shown[role], target[role], target);
     }
   }
   requestAnimationFrame(frame);

@@ -18,7 +18,7 @@ const ARENA = {
     '#........#',
     '#.....##.#',
     '#........#',
-    '#F.W.....#',
+    '#F.W...fw#',
     '##########',
   ],
 };
@@ -109,20 +109,9 @@ test('characters block each other sideways', () => {
   assert.ok(a.x + P.CHAR.width <= b.x + 1e-6);
 });
 
-test('test-01: high ledge needs a partner boost', () => {
-  const L = P.parseLevel(require('../levels/test-01.json'));
-  const stepTop = 9 * P.TILE, ledgeTop = 5 * P.TILE;
-  const jumpH = (P.CHAR.jumpVel ** 2) / (2 * P.CHAR.gravity);
-  assert.ok(stepTop - ledgeTop > jumpH, 'unreachable alone');
-  assert.ok(stepTop - P.CHAR.height - ledgeTop < jumpH, 'reachable from partner');
-  // every other step is reachable alone
-  for (const [lower, upper] of [[21, 18], [18, 15], [15, 12], [12, 9]]) {
-    assert.ok((lower - upper) * P.TILE < jumpH);
-  }
-  assert.ok(L.spawns.fire && L.spawns.water);
-});
-
 test('parseLevel rejects ragged rows and missing spawns', () => {
   assert.throws(() => P.parseLevel({ id: 'x', rows: ['###', '#F'] }));
   assert.throws(() => P.parseLevel({ id: 'x', rows: ['###', '#F#'] }));
+  assert.throws(() => P.parseLevel({ id: 'x', rows: ['#####', '#FW.#', '#####'] }), /exits/);
+  assert.throws(() => P.parseLevel({ id: 'x', rows: ['######', '#FWfwZ', '######'] }), /unknown tile/);
 });

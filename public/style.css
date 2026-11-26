@@ -43,7 +43,7 @@ body {
 }
 
 #rotate { display: none; opacity: 0.7; }
-@media (orientation: portrait) { #rotate { display: inline; } }
+@media (orientation: portrait) and (max-width: 700px) { #rotate { display: block; } }
 
 #stage {
   flex: 1;
@@ -95,4 +95,33 @@ body {
 
 @media (orientation: landscape) and (max-height: 500px) {
   .ctl { width: 72px; height: 72px; font-size: 28px; opacity: 0.85; }
+}
+
+/* ---- Levels, banners ---- */
+#hud { flex-wrap: wrap; row-gap: 4px; }
+#levelinfo { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#levelname { opacity: 0.75; }
+#rotate { position: fixed; top: calc(env(safe-area-inset-top) + 72px); left: 0; right: 0; text-align: center; font-size: 14px; pointer-events: none; }
+
+#stage { position: relative; }
+
+#banner {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 18, 31, 0.88);
+  border-radius: 12px;
+  padding: 16px 24px;
+  text-align: center;
+  font-size: 18px;
+  line-height: 1.5;
+  pointer-events: none;
+  max-width: calc(100% - 32px);
+}
+#banner[hidden] { display: none; }
+#banner b { font-size: 24px; display: block; }
+
+@media (orientation: landscape) and (max-height: 500px) {
+  #hud { font-size: 12px; padding: 4px 10px; }
+  #hud button { padding: 4px 8px; }
 }

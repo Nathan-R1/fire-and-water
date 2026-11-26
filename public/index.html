@@ -10,8 +10,9 @@
 <body>
   <header id="hud">
     <span id="status">Connecting…</span>
-    <span id="rotate">↻ Rotate for a bigger view</span>
+    <span id="levelinfo"><b id="levelnum">–</b> <span id="levelname"></span> · <span id="timer">0:00</span> · <span id="gemcount"></span></span>
     <span class="hud-right">
+      <button id="restart" type="button" aria-label="Restart level" hidden>↺</button>
       <button id="fullscreen" type="button" hidden aria-label="Fullscreen">⛶</button>
       <button id="share" type="button">Room <b id="code">----</b> · Share</button>
     </span>
@@ -19,7 +20,9 @@
 
   <main id="stage">
     <canvas id="game"></canvas>
+    <div id="banner" hidden></div>
   </main>
+  <span id="rotate">↻ Rotate for a bigger view</span>
 
   <div id="controls" hidden>
     <div id="dpad" aria-label="Move">
