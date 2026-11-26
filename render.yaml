@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: fire-and-water
+    runtime: node
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false

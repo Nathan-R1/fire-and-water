@@ -15,14 +15,14 @@ Online two-player co-op platformer in the style of the Fire Boy & Water Girl gen
 ```
 Phone A ─┐                       ┌─ Supabase (Postgres)
          ├─ WebSocket ─ Render ──┤   rooms, later: levels, progress
-Phone B ─┘   (Socket.IO)  Node    └─ service-role key, server only
+Phone B ─┘   (Socket.IO)  Node    └─ secret key, server only
 ```
 
 - **Render Web Service** runs Node with Express and Socket.IO. It:
   - serves the static client from `public/`
   - holds room state in memory and is the authority on game state. Clients send only input (`left`, `right` or `stop`), the server runs physics at 30 Hz and broadcasts positions, and clients interpolate between updates.
 - **Supabase** stores data that has to outlive a server process. In phase 1 that is only a `rooms` table, which records when a room is created or ended. Later it will hold levels, completions and leaderboards.
-  - Only the server talks to Supabase, using the service-role key. The browser never gets a key.
+  - Only the server talks to Supabase, using the secret key. The browser never gets a key.
   - The server still runs without Supabase env vars, so local development works with no setup.
 - Gameplay traffic does not go through Supabase. Realtime state over a WebSocket to Render has lower latency, and it lets the server enforce the rules later (hazards, doors, win conditions).
 
@@ -52,11 +52,13 @@ create table public.rooms (
 alter table public.rooms enable row level security;  -- no policies: server-only access
 ```
 
+The migration file is `supabase/migrations/001_rooms.sql`.
+
 ## Render config
 
-- Type: Web Service, runtime Node, build `npm install`, start `node server.js`
+- Type: Web Service, runtime Node, build `npm install`, start `npm start`
 - Health check path: `/healthz`
-- Env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (secret). Render provides `PORT` automatically.
+- Env vars: `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (secret). Render provides `PORT` automatically.
 
 ## Later phases (not started)
 
