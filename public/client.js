@@ -230,7 +230,7 @@
     if (s.run) renderRun(s.run, s.phase);
   });
 
-  const CAUSE = { burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
+  const CAUSE = { lastchance: "didn't make it back in time", burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
   socket.on('event', (e) => {
     if (e.type === 'level') {
       setLevel(e);
@@ -247,6 +247,12 @@
     } else if (e.type === 'bonus') {
       const b = Bonuses.BY_ID[e.id];
       if (b) flashStatus(`+ ${b.name}${e.role ? ` (${e.role === 'fire' ? '🔥' : '💧'})` : ''}`);
+    } else if (e.type === 'stomp') {
+      if (e.role === myRole) navigator.vibrate?.(25);
+    } else if (e.type === 'lastchance') {
+      showBanner(`<b>⏳ Last Chance!</b>${e.role === 'fire' ? '🔥 Fire' : '💧 Water'}: back to your start in 5 seconds`, 1500);
+    } else if (e.type === 'lastchance-saved') {
+      showBanner('<b>Made it!</b>No heart lost: the room restarts', 1500);
     } else if (e.type === 'ward') {
       if (e.role === myRole) flashStatus(`🛡 Element Ward: ${e.seconds}s`);
     } else if (e.type === 'countdown') {
@@ -403,7 +409,7 @@
     if (inp.j) Physics.pressJump(me);
     Physics.stepEnv(level, localState, [me, partner]);
     Physics.stepBody(level, me, toInput(inp.d), [partner], Physics.DT, localState);
-    return Physics.hazardUnder(level, me, myRole) !== 0;
+    return Physics.hazardUnder(level, me, myRole, localState) !== 0;
   }
 
   function clientTick() {
@@ -427,7 +433,7 @@
     const before = me && { x: me.x, y: me.y };
     me = {
       x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing,
-      jumpMul: srv.jumpMul, speedMul: srv.speedMul, maxAirJumps: srv.maxAirJumps, airJumps: srv.airJumps, flyT: srv.flyT, acidImmune: srv.acidImmune, magnet: srv.magnet,
+      jumpMul: srv.jumpMul, speedMul: srv.speedMul, maxAirJumps: srv.maxAirJumps, airJumps: srv.airJumps, flyT: srv.flyT, acidImmune: srv.acidImmune, magnet: srv.magnet, phase: srv.phase,
     };
     resetLocalWorld(s);
     pending = pending.filter((p) => p.s > srv.ack);
@@ -530,10 +536,18 @@
   }
 
   function drawPools(now) {
+    const solid = new Set((target && target.safePools) || []);
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
         const t = Physics.tileAt(level, tx, ty);
         if (t !== T.LAVA && t !== T.WATER && t !== T.ACID) continue;
+        if (solid.has(`${tx},${ty}`)) { // Solidify: hardened, walkable by both
+          ctx.fillStyle = t === T.LAVA ? '#5a3226' : '#2c4a66';
+          ctx.fillRect(tx * TILE, ty * TILE, TILE, TILE / 2 + 3);
+          ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(tx * TILE + 4, ty * TILE + 3); ctx.lineTo(tx * TILE + 12, ty * TILE + 9); ctx.lineTo(tx * TILE + 20, ty * TILE + 4); ctx.stroke();
+          continue;
+        }
         const wave = Math.sin(now / 300 + tx * 1.3) * 1.5;
         ctx.fillStyle = COLORS[t];
         ctx.fillRect(tx * TILE, ty * TILE + 3 + wave, TILE, TILE / 2 - wave);
@@ -676,7 +690,12 @@
     const dead = s.phase === 'dead' || t.dead;
     const blink = s.run && s.run.invuln[role] > 0 && Math.floor(performance.now() / 100) % 2;
     const fx = s.run && s.run.effects ? s.run.effects[role] : null;
-    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : blink ? 0.35 : fx && fx.cloakT > 0 ? 0.4 : 1;
+    const ghost = s.run && s.run.ghost && s.run.ghost[role] > 0;
+    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : blink ? 0.35 : fx && fx.cloakT > 0 ? 0.4 : (t.phase || ghost) ? 0.45 : 1;
+    if (t.phase || ghost) {
+      ctx.save(); ctx.globalAlpha = 0.9; ctx.strokeStyle = ghost ? '#ffd84a' : '#c9c0ff'; ctx.setLineDash([3, 3]); ctx.lineWidth = 2;
+      ctx.strokeRect(p.x - 2, p.y - 2, w + 4, h + 4); ctx.restore();
+    }
     if (fx && fx.shieldT > 0) {
       ctx.strokeStyle = '#7ff3ff'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(p.x + w / 2, p.y + h / 2, h * 0.75, 0, Math.PI * 2); ctx.stroke();
@@ -784,85 +803,106 @@
       <div class="kind">${kindLabel(b)}${owner ? ` · ${roleIcon(owner)}'s` : ''}${item && item.spent ? ' · used up' : item && !item.ready ? ' · used, recharges next room' : ''}</div><p>${escapeHtml(b.desc)}</p><div class="actions"></div>`;
     if (item && b.color === 'yellow' && !item.spent) {
       for (const role of myRoles.filter((r2) => !owner || r2 === owner)) {
-        const btn = document.createElement('button');
-        const on = run.equip[role] === item.uid;
-        btn.textContent = on ? `Equipped by ${roleIcon(role)} ✓` : `Equip for ${roleIcon(role)}`;
-        btn.disabled = on;
-        btn.addEventListener('click', () => { socket.emit('equip', { r: role, uid: item.uid }); tip.hidden = true; });
-        tip.querySelector('.actions').append(btn);
+        if (run.locked[role]) {
+          if (!b.exclusive) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = `${roleIcon(role)} has an item that replaces all other actives.`; tip.querySelector('.actions').append(p); }
+          continue;
+        }
+        for (const slot of run.secondSlot[role] ? [1, 2] : [1]) {
+          const btn = document.createElement('button');
+          const on = (slot === 2 ? run.equip2 : run.equip)[role] === item.uid;
+          const where = slot === 2 ? ' (slot 2)' : run.secondSlot[role] ? ' (slot 1)' : '';
+          btn.textContent = on ? `Equipped by ${roleIcon(role)}${where} ✓` : `Equip for ${roleIcon(role)}${where}`;
+          btn.disabled = on;
+          btn.addEventListener('click', () => { socket.emit('equip', { r: role, uid: item.uid, slot }); tip.hidden = true; });
+          tip.querySelector('.actions').append(btn);
+        }
       }
     }
     tip.hidden = false;
   }
   document.addEventListener('pointerdown', (e) => { if (!$('tip').hidden && !e.target.closest('#tip, .chip')) $('tip').hidden = true; });
 
-  // ✦ use-item button above jump: shows the item you have equipped.
-  function equippedItem() {
+  // ✦ use-item buttons above jump: slot 1, and slot 2 with Dual Wield. Each shows the
+  // item equipped in it; tap to use, swipe left/right to switch to another active.
+  const slotEquip = (slot) => (slot === 2 ? run.equip2 : run.equip);
+  const useBtn = (slot) => $(slot === 2 ? 'use2' : 'use');
+  function equippedItem(slot = 1) {
     if (!run || !myRole) return null;
-    const uid = run.equip[myRole];
+    const uid = slotEquip(slot)[myRole];
     return run.items.concat(run.personal[myRole]).find((i) => i.uid === uid) || null;
   }
   function renderUse() {
-    const btn = $('use');
-    const it = equippedItem();
-    btn.hidden = mode !== 'challenge' || !myRole;
-    const many = activeChoices().length > 1;
-    btn.innerHTML = (it ? Bonuses.BY_ID[it.id].icon : '✦') + (many ? '<span class="cyc l">‹</span><span class="cyc r">›</span>' : '');
-    btn.classList.toggle('spent', !it || !it.ready || it.cool);
-    btn.title = (it ? Bonuses.BY_ID[it.id].name : 'No item equipped: tap an item in the bar') + (many ? ' · swipe to switch' : '');
+    for (const slot of [1, 2]) {
+      const btn = useBtn(slot);
+      const it = equippedItem(slot);
+      btn.hidden = mode !== 'challenge' || !myRole || (slot === 2 && !(run && run.secondSlot[myRole]));
+      if (btn.hidden) continue;
+      const many = !run.locked[myRole] && activeChoices(slot).length > 1;
+      btn.innerHTML = (it ? Bonuses.BY_ID[it.id].icon : '✦') + (many ? '<span class="cyc l">‹</span><span class="cyc r">›</span>' : '');
+      btn.classList.toggle('spent', !it || !it.ready || it.cool);
+      btn.classList.toggle('on', !!(it && it.id === 'phase' && me && me.phase));
+      btn.title = (it ? Bonuses.BY_ID[it.id].name : 'No item equipped: tap an item in the bar') + (many ? ' · swipe to switch' : '');
+    }
   }
-  function useItem() {
-    const it = equippedItem();
+  function useItem(slot = 1) {
+    const it = equippedItem(slot);
     if (!it) return flashStatus('No item equipped: tap a yellow item in the bar');
     if (it.cool) return;
     if (!it.ready) return flashStatus(`${Bonuses.BY_ID[it.id].name} recharges next room`);
-    if (it.id === 'wings' && me) me.flyT = Bonuses.BY_ID.wings.duration; // predict the flight right away
-    socket.emit('use', { r: myRole });
+    // predict instant effects so they feel immediate
+    if (it.id === 'wings' && me) me.flyT = Bonuses.BY_ID.wings.duration;
+    if (it.id === 'phase' && me) me.phase = !me.phase;
+    socket.emit('use', { r: myRole, slot });
     navigator.vibrate?.(15);
   }
-  // The active items this player can switch between, in bar order (team, then their own).
-  // A team item your partner has equipped is skipped, so swiping never takes it from them.
-  function activeChoices() {
+  // The active items this player can switch a slot to, in bar order (team, then their
+  // own). Skips whatever is in the partner's slots or this player's other slot.
+  function activeChoices(slot = 1) {
     if (!run || !myRole) return [];
     const other = myRole === 'fire' ? 'water' : 'fire';
-    const yellow = (it) => Bonuses.BY_ID[it.id].color === 'yellow' && !it.spent;
-    return run.items.filter((it) => yellow(it) && run.equip[other] !== it.uid).concat(run.personal[myRole].filter(yellow));
+    const taken = new Set([run.equip[other], run.equip2[other], slotEquip(slot === 2 ? 1 : 2)[myRole]]);
+    const ok = (it) => Bonuses.BY_ID[it.id].color === 'yellow' && !it.spent && !Bonuses.BY_ID[it.id].exclusive && !taken.has(it.uid);
+    return run.items.filter(ok).concat(run.personal[myRole].filter(ok));
   }
-  function cycleItem(step) {
-    const list = activeChoices();
+  function cycleItem(step, slot = 1) {
+    if (run && run.locked[myRole]) return flashStatus('Phase replaces your other actives');
+    const list = activeChoices(slot);
     if (!list.length) return flashStatus('No active items');
-    const cur = list.findIndex((it) => it.uid === run.equip[myRole]);
+    const cur = list.findIndex((it) => it.uid === slotEquip(slot)[myRole]);
     const next = list[cur < 0 ? (step > 0 ? 0 : list.length - 1) : (cur + step + list.length) % list.length];
-    if (next.uid === run.equip[myRole]) return flashStatus(`${Bonuses.BY_ID[next.id].name} is your only active`);
-    socket.emit('equip', { r: myRole, uid: next.uid });
-    flashStatus(`✦ ${Bonuses.BY_ID[next.id].name}`);
+    if (next.uid === slotEquip(slot)[myRole]) return flashStatus(`${Bonuses.BY_ID[next.id].name} is your only choice`);
+    socket.emit('equip', { r: myRole, uid: next.uid, slot });
+    flashStatus(`✦${slot === 2 ? '2' : ''} ${Bonuses.BY_ID[next.id].name}`);
     navigator.vibrate?.(8);
   }
-  // ✦ button: tap to use; swipe left/right on it to switch to the previous/next active.
   const SWIPE = 28; // px
-  let useStart = null;
-  $('use').addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    $('use').setPointerCapture?.(e.pointerId);
-    useStart = { x: e.clientX, id: e.pointerId, swiped: false };
-  });
-  $('use').addEventListener('pointermove', (e) => {
-    if (!useStart || e.pointerId !== useStart.id || useStart.swiped) return;
-    const dx = e.clientX - useStart.x;
-    if (Math.abs(dx) >= SWIPE) { useStart.swiped = true; cycleItem(dx > 0 ? 1 : -1); }
-  });
-  $('use').addEventListener('pointerup', (e) => {
-    if (!useStart || e.pointerId !== useStart.id) return;
-    if (!useStart.swiped) useItem();
-    useStart = null;
-  });
-  $('use').addEventListener('pointercancel', () => { useStart = null; });
+  for (const slot of [1, 2]) {
+    const btn = useBtn(slot);
+    let start = null;
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      btn.setPointerCapture?.(e.pointerId);
+      start = { x: e.clientX, id: e.pointerId, swiped: false };
+    });
+    btn.addEventListener('pointermove', (e) => {
+      if (!start || e.pointerId !== start.id || start.swiped) return;
+      const dx = e.clientX - start.x;
+      if (Math.abs(dx) >= SWIPE) { start.swiped = true; cycleItem(dx > 0 ? 1 : -1, slot); }
+    });
+    btn.addEventListener('pointerup', (e) => {
+      if (!start || e.pointerId !== start.id) return;
+      if (!start.swiped) useItem(slot);
+      start = null;
+    });
+    btn.addEventListener('pointercancel', () => { start = null; });
+  }
   addEventListener('keydown', (e) => {
     if (mode !== 'challenge' || e.repeat) return;
     if (e.code === 'KeyZ') cycleItem(-1);
     if (e.code === 'KeyC') cycleItem(1);
+    if (e.code === 'KeyE' || e.code === 'ShiftLeft') useItem(1);
+    if (e.code === 'KeyF') useItem(2);
   });
-  addEventListener('keydown', (e) => { if ((e.code === 'KeyE' || e.code === 'ShiftLeft') && !e.repeat && mode === 'challenge') useItem(); });
 
   // The map between rooms: team vote (rock paper scissors on a tie), then personal picks.
   function card(id, { chosen, votes, onPick }) {
@@ -1050,7 +1090,7 @@
         ctx.fillStyle = '#9a6a3a'; ctx.fillRect(x, y, n, n);
         ctx.strokeStyle = '#6b4626'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, n - 2, n - 2);
         ctx.beginPath(); ctx.moveTo(x + 3, y + 3); ctx.lineTo(x + n - 3, y + n - 3); ctx.moveTo(x + n - 3, y + 3); ctx.lineTo(x + 3, y + n - 3); ctx.stroke();
-        if (e.shake) { ctx.fillStyle = '#ff3b3b'; ctx.fillRect(x + n / 2 - 5, y + n / 2 - 2, 3, 3); ctx.fillRect(x + n / 2 + 2, y + n / 2 - 2, 3, 3); }
+        if (e.shake || r.keenEye) { ctx.fillStyle = '#ff3b3b'; ctx.fillRect(x + n / 2 - 5, y + n / 2 - 2, 3, 3); ctx.fillRect(x + n / 2 + 2, y + n / 2 - 2, 3, 3); }
       } else if (e.type === 'charger') {
         const tired = e.mode === 'tired';
         ctx.fillStyle = tired ? '#7a6a6a' : '#c0392b';
@@ -1140,6 +1180,17 @@
     drawBoxes(world);
     drawGems(target, now);
     if (target.run) drawEnemies(target.run, now);
+    if (target.run && target.run.ghost) {
+      for (const role of ['fire', 'water']) {
+        const left = target.run.ghost[role];
+        if (!(left > 0)) continue;
+        const sp = level.spawns[role];
+        ctx.strokeStyle = '#ffd84a'; ctx.lineWidth = 3; ctx.setLineDash([5, 4]);
+        ctx.strokeRect(sp.x - 8, sp.y - 8, CHAR.width + 16, CHAR.height + 16); ctx.setLineDash([]);
+        ctx.font = 'bold 30px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffd84a';
+        ctx.fillText(`${role === 'fire' ? '🔥' : '💧'} back to start: ${left.toFixed(1)}`, level.pxWidth / 2, TILE * 2.4);
+      }
+    }
     if (target.run && !target.run.started && target.phase === 'playing') {
       ctx.font = 'bold 26px system-ui';
       ctx.textAlign = 'center';
@@ -1153,7 +1204,7 @@
       const pos = role === myRole && me && playing()
         ? { x: me.x + errX, y: me.y + errY }
         : role === myRole ? { x: target[role].x, y: target[role].y } : interpolated(role, now);
-      drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx, dead: meDead } : target[role], target);
+      drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx, dead: meDead, phase: me.phase } : target[role], target);
     }
   }
   requestAnimationFrame(frame);

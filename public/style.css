@@ -74,7 +74,7 @@ body {
 /* landscape: lift the controls a little */
 @media (orientation: landscape) { #controls { padding-bottom: 36px; } }
 
-#dpad, #jump, #use { pointer-events: auto; }
+#dpad, #jump, #use, #use2 { pointer-events: auto; }
 
 #dpad { display: flex; gap: 8px; }
 
@@ -274,14 +274,16 @@ body.on-menu { touch-action: auto; }
 
 /* use-item button sits above jump */
 .right-ctl { display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
-#use { width: 60px; height: 60px; font-size: 22px; color: #ffd84a; border: 2px solid #ffd84a; }
-#use[hidden] { display: none; }
-#use.spent { opacity: 0.35; }
-#use svg { width: 28px; height: 28px; }
-#use { position: relative; touch-action: none; }
-#use .cyc { position: absolute; top: 50%; transform: translateY(-50%); font-size: 14px; opacity: 0.6; }
-#use .cyc.l { left: 4px; }
-#use .cyc.r { right: 4px; }
+#use, #use2 { width: 60px; height: 60px; font-size: 22px; color: #ffd84a; border: 2px solid #ffd84a; }
+#use2 { width: 52px; height: 52px; border-style: dashed; }
+#use.on, #use2.on { background: rgba(155, 140, 255, 0.5); }
+#use[hidden], #use2[hidden] { display: none; }
+#use.spent, #use2.spent { opacity: 0.35; }
+#use svg, #use2 svg { width: 28px; height: 28px; }
+#use, #use2 { position: relative; touch-action: none; }
+#use .cyc, #use2 .cyc { position: absolute; top: 50%; transform: translateY(-50%); font-size: 14px; opacity: 0.6; }
+#use .cyc.l, #use2 .cyc.l { left: 4px; }
+#use .cyc.r, #use2 .cyc.r { right: 4px; }
 
 /* map between rooms, and the end of a run */
 #mapview, #over {

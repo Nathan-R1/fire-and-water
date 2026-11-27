@@ -9,7 +9,8 @@ const B = require('../shared/bonuses');
 const ROLES = ['fire', 'water'];
 const STAGES = ['room', 'room', 'room', 'room', 'boss1', 'room', 'room', 'room', 'room', 'boss2'];
 const HEARTS = { start: 5, max: 8 };
-const GUARDIAN_INVULN = 1;      // seconds of safety after Guardian sends you back to start
+const GUARDIAN_INVULN = 1;
+const LAST_CHANCE_SECONDS = 5;      // seconds of safety after Guardian sends you back to start
 // Boss 2's acid floor: a 3 s countdown, then all ground burns for 0.1 s. A jump keeps you
 // in the air ~0.62 s, so you have about half a second in which to jump.
 const ACID = { period: 9, countdown: 3, burn: 0.1, firstAt: 4 };
@@ -55,7 +56,10 @@ function createRun(seed = (Math.random() * 2 ** 32) >>> 0) {
     items: [],                       // team inventory: { uid, id, ready, spent, coolT }
     personal: { fire: [], water: [] }, // each player's own items, same shape
     nextUid: 1,
-    equip: { fire: null, water: null }, // uid of the yellow item each player has equipped
+    equip: { fire: null, water: null },  // uid of the active item in each player's ✦ slot
+    equip2: { fire: null, water: null }, // second slot (Dual Wield)
+    ghost: { fire: 0, water: 0 },        // Last Chance countdown (s): intangible, get back to the start
+    lastChanceUsed: false,
     effects: { fire: { cloakT: 0, shieldT: 0 }, water: { cloakT: 0, shieldT: 0 } },
     inElement: { fire: false, water: false }, // for Element Ward: were you in your element last tick?
     bullets: [],                     // Blaster shots
@@ -249,13 +253,17 @@ function enemyRect(e) {
 // Advance enemies one tick. Returns the roles hit this tick: [{ role, cause }].
 function updateEnemies(room, dt) {
   const run = room.run;
+  const playerDt = dt;
+  // Slow Time: enemies (and their shots and timers) run 25% slower per copy.
+  dt *= Math.pow(0.75, teamCount(run, 'slowtime'));
   run.time += dt;
+  lastChanceTick(room, playerDt);
   for (const r of ROLES) {
-    run.invuln[r] = Math.max(0, run.invuln[r] - dt);
-    run.effects[r].cloakT = Math.max(0, run.effects[r].cloakT - dt);
-    run.effects[r].shieldT = Math.max(0, run.effects[r].shieldT - dt);
+    run.invuln[r] = Math.max(0, run.invuln[r] - playerDt);
+    run.effects[r].cloakT = Math.max(0, run.effects[r].cloakT - playerDt);
+    run.effects[r].shieldT = Math.max(0, run.effects[r].shieldT - playerDt);
   }
-  for (const it of allItems(run)) if (it.coolT > 0) it.coolT = Math.max(0, it.coolT - dt);
+  for (const it of allItems(run)) if (it.coolT > 0) it.coolT = Math.max(0, it.coolT - playerDt);
   const cloaked = (r) => run.effects[r].cloakT > 0;
   // Element Ward: stepping into your own element shields you for 1 s per copy.
   for (const r of ROLES) {
@@ -276,10 +284,10 @@ function updateEnemies(room, dt) {
       e.yNow = e.y + Math.sin(run.time * 1.7) * e.amp; // e.y is the centre line
     } else if (e.type === 'walker') {
       e.size = e.size0 + (e.size1 - e.size0) * Math.min(1, run.time / e.grow);
-      walk(room, e);
+      walk(room, e, dt);
       if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x + e.size > e.x1) { e.x = e.x1 - e.size; e.dir = -1; }
     } else if (e.type === 'patrol') {
-      walk(room, e);
+      walk(room, e, dt);
       if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
     } else if (e.type === 'bomber') {
       e.x += e.dir * e.speed * dt;
@@ -345,7 +353,7 @@ function updateEnemies(room, dt) {
   // Blaster shots: short range, destroy sentries, stun bosses.
   run.bullets = run.bullets.filter((b) => {
     const bx0 = b.x;
-    b.x += b.vx * dt; b.left -= Math.abs(b.vx * dt);
+    b.x += b.vx * playerDt; b.left -= Math.abs(b.vx * playerDt);
     if (b.left <= 0 || hitsSolid(bx0, b.y, b.x, b.y, GUN.size)) return false;
     const br = { x: b.x, y: b.y, w: GUN.size, h: GUN.size };
     for (const e of run.enemies) {
@@ -377,10 +385,11 @@ function updateEnemies(room, dt) {
       }
     }
   }
+  stomps(room);
   // Touching an enemy (not while cloaked) or an enemy shot.
   for (const r of ROLES) {
     const cr = shrink(charRect(room.players[r].body), 2);
-    if (!cloaked(r)) {
+    if (!cloaked(r) && !(run.ghost[r] > 0)) {
       const p = room.players[r];
       for (const e of run.enemies) {
         if (e.dead || e.stunT > 0) continue;
@@ -392,6 +401,7 @@ function updateEnemies(room, dt) {
           continue;
         }
         if (e.type === 'mimic') {
+          if (teamCount(run, 'keeneye')) continue; // Keen Eye: decoys can't hurt you
           // walking into its side ("pushing" it) gets you stabbed; standing on it is fine
           const b = p.body, er = liveRect(e);
           const level = b.y + P.CHAR.height > er.y + 2 && b.y < er.y + er.h;
@@ -424,8 +434,7 @@ function onRealGround(room, b) {
 
 // Walkers turn around instead of walking into boxes, mimics, closed gates, pulley
 // platforms or rock. Only new contact counts, so one a box was pushed into can leave.
-function walk(room, e) {
-  const dt = P.DT;
+function walk(room, e, dt) {
   const now = enemyRect(e);
   const next = { ...now, x: now.x + e.dir * e.speed * dt };
   if (blockedRects(room, next).some((o) => !overlaps(now, o))) { e.dir = -e.dir; return; }
@@ -497,6 +506,53 @@ function stepCharger(room, e, dt, cloaked) {
   void run;
 }
 
+// Stomp: land on an enemy from above to destroy it (bigger ones are stunned) and bounce.
+function stomps(room) {
+  const run = room.run;
+  for (const r of ROLES) {
+    const b = room.players[r].body;
+    const feet = b.y + P.CHAR.height;
+    const prev = run.prevFeet[r] ?? feet;
+    run.prevFeet[r] = feet;
+    if (!run.personal[r].some((i) => i.id === 'stomp') || feet < prev - 0.01) continue; // only coming down
+    for (const e of run.enemies) {
+      if (e.dead || (e.type === 'burrower' && e.phase !== 'out')) continue;
+      const er = liveRect(e);
+      const across = b.x < er.x + er.w && b.x + P.CHAR.width > er.x;
+      if (!across || prev > er.y + 6 || feet < er.y - 2) continue;
+      if (killable(e)) kill(room, e); else e.stunT = Math.max(e.stunT, 2.5);
+      b.vy = -P.CHAR.jumpVel * 0.7;
+      b.onGround = false;
+      room.events.push({ type: 'stomp', role: r });
+      break;
+    }
+  }
+}
+
+const teamCount = (run, id) => run.items.filter((i) => i.id === id).length;
+
+// Last Chance: count down; back at your start in time → the room restarts, no heart lost.
+function lastChanceTick(room, dt) {
+  const run = room.run;
+  for (const r of ROLES) {
+    if (!(run.ghost[r] > 0)) continue;
+    const b = room.players[r].body, s = room.level.spawns[r];
+    if (Math.hypot(b.x - s.x, b.y - s.y) < T) {
+      run.ghost[r] = 0;
+      b.phase = false;
+      room.events.push({ type: 'lastchance-saved', role: r });
+      room.resetRequested = true;
+      return;
+    }
+    run.ghost[r] -= dt;
+    if (run.ghost[r] <= 0) {
+      run.ghost[r] = 0;
+      b.phase = false;
+      run.ghostFailed = r; // game.js turns this into a death
+    }
+  }
+}
+
 function liveRect(e) {
   return e.type === 'flyer' ? { x: e.x, y: e.yNow ?? e.y, w: e.w, h: e.h } : enemyRect(e);
 }
@@ -505,12 +561,19 @@ function liveRect(e) {
 // safety after Guardian, or Guardian itself (once per room: back to the start).
 function absorb(room, role) {
   const run = room.run;
-  if (run.invuln[role] > 0 || run.effects[role].shieldT > 0) return true;
+  if (run.invuln[role] > 0 || run.effects[role].shieldT > 0 || run.ghost[role] > 0) return true;
   if (!run.shieldUsed && run.items.some((i) => i.id === 'guardian')) {
     run.shieldUsed = true;
     run.invuln[role] = GUARDIAN_INVULN;
     toStart(room, role);
     room.events.push({ type: 'guardian', role });
+    return true;
+  }
+  if (!run.lastChanceUsed && teamCount(run, 'lastchance')) {
+    run.lastChanceUsed = true;
+    run.ghost[role] = LAST_CHANCE_SECONDS;
+    room.players[role].body.phase = true; // intangible
+    room.events.push({ type: 'lastchance', role });
     return true;
   }
   return false;
@@ -533,7 +596,7 @@ const allItems = (run) => run.items.concat(run.personal.fire, run.personal.water
 const ownedIds = (run, role) => run.personal[role].map((i) => i.id);
 
 function bodyMods(run, role) {
-  return { ...B.mods(ownedIds(run, role)), flyT: 0, airJumps: 0 };
+  return { ...B.mods(ownedIds(run, role)), flyT: 0, airJumps: 0, phase: false };
 }
 
 // Called at the start of every attempt (room load, restart, after a death).
@@ -544,6 +607,11 @@ function onAttempt(room) {
   run.invuln = { fire: 0, water: 0 };
   run.effects = { fire: { cloakT: 0, shieldT: 0 }, water: { cloakT: 0, shieldT: 0 } };
   run.inElement = { fire: false, water: false };
+  run.ghost = { fire: 0, water: 0 };
+  run.ghostFailed = null;
+  run.lastChanceUsed = false;
+  run.prevFeet = {};
+  room.resetRequested = false;
   for (const it of allItems(run)) { if (!it.spent) it.ready = true; it.coolT = 0; } // once-per-room items recharge
   for (const r of ROLES) Object.assign(room.players[r].body, bodyMods(run, r));
   resetEnemies(room);
@@ -634,9 +702,14 @@ function grant(room, id, role) {
     const it = { uid: run.nextUid++, id, ready: true, spent: false, coolT: 0 };
     if (b.scope === 'personal') run.personal[role].push(it); else run.items.push(it);
     // Equip a new active item straight away for whoever has nothing equipped.
-    if (b.color === 'yellow') {
+    if (b.exclusive) { run.equip[role] = it.uid; run.equip2[role] = null; } // replaces their other actives
+    else if (b.color === 'yellow') {
       const who = b.scope === 'personal' ? [role] : role ? [role, ...ROLES] : ROLES;
-      for (const r of who) if (!run.equip[r]) { run.equip[r] = it.uid; break; }
+      for (const r of who) {
+        if (exclusiveOf(run, r)) continue;
+        if (!run.equip[r]) { run.equip[r] = it.uid; break; }
+        if (hasSecondSlot(run, r) && !run.equip2[r]) { run.equip2[r] = it.uid; break; }
+      }
     }
     if (b.scope === 'personal') Object.assign(room.players[role].body, B.mods(ownedIds(run, role)));
   }
@@ -721,12 +794,19 @@ function findEquippable(run, role, uid) {
   return own && B.BY_ID[own.id].color === 'yellow' ? own : null;
 }
 
-// Equip an active item (a team item is taken from the partner if they had it).
-function equip(room, role, uid) {
+const exclusiveOf = (run, role) => run.personal[role].find((i) => B.BY_ID[i.id].exclusive) || null;
+const hasSecondSlot = (run, role) => run.personal[role].some((i) => i.id === 'dualwield') && !exclusiveOf(run, role);
+const slotsOf = (run, slot) => (slot === 2 ? run.equip2 : run.equip);
+
+// Equip an active item in slot 1 or 2 (a team item is taken from wherever it was).
+// A player with an exclusive item (Phase) can't equip anything else.
+function equip(room, role, uid, slot = 1) {
   const run = room.run;
   if (!ROLES.includes(role) || !findEquippable(run, role, uid)) return false;
-  for (const r of ROLES) if (run.equip[r] === uid) run.equip[r] = null;
-  run.equip[role] = uid;
+  if (exclusiveOf(run, role)) return false;
+  if (slot === 2 && !hasSecondSlot(run, role)) return false;
+  for (const r of ROLES) for (const sl of [run.equip, run.equip2]) if (sl[r] === uid) sl[r] = null;
+  slotsOf(run, slot)[role] = uid;
   return true;
 }
 
@@ -746,11 +826,14 @@ function boxSpot(room, body) {
   return null;
 }
 
-// The ✦ button: use the equipped item.
-function use(room, role) {
+// The ✦ button (or the second one, with Dual Wield): use the equipped item.
+function use(room, role, slot = 1) {
   const run = room.run;
   if (room.phase !== 'playing' || !ROLES.includes(role)) return false;
-  const it = findEquippable(run, role, run.equip[role]);
+  const excl = exclusiveOf(run, role);
+  if (excl && (slot !== 1 || run.equip[role] !== excl.uid)) return false; // only the exclusive item works
+  if (slot === 2 && !hasSecondSlot(run, role)) return false;
+  const it = findEquippable(run, role, slotsOf(run, slot)[role]);
   if (it) run.started = true; // using an item starts the room too
   if (!it) return false;
   const b = B.BY_ID[it.id];
@@ -806,13 +889,32 @@ function use(room, role) {
     case 'cloak': run.effects[role].cloakT = b.duration; break;
     case 'shield': run.effects[role].shieldT = b.duration; break;
     case 'wings': me.flyT = b.duration; break;
+    case 'phase': me.phase = !me.phase; break;
+    case 'solidify': {
+      if (!onOwnPool(room.level, me, role)) return false;
+      const own = role === 'fire' ? P.T.LAVA : P.T.WATER;
+      // the whole connected pool under your feet hardens
+      const ty = Math.round((me.y + P.CHAR.height) / T);
+      const start = [];
+      for (let tx = Math.floor((me.x + 4) / T); tx <= Math.floor((me.x + P.CHAR.width - 4) / T); tx++) if (P.tileAt(room.level, tx, ty) === own) start.push([tx, ty]);
+      const seen = new Set(room.state.safePools);
+      while (start.length) {
+        const [x, y] = start.pop();
+        const k = `${x},${y}`;
+        if (seen.has(k) || P.tileAt(room.level, x, y) !== own) continue;
+        seen.add(k);
+        start.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+      }
+      room.state.safePools = [...seen];
+      break;
+    }
     default: return false;
   }
   if (b.uses === 'combat') it.ready = false;
   if (b.uses === 'cooldown') it.coolT = b.cooldown;
   if (b.uses === 'once') {
     it.spent = true; it.ready = false;
-    for (const r of ROLES) if (run.equip[r] === it.uid) run.equip[r] = null; // used up: can't be equipped
+    for (const r of ROLES) for (const sl of [run.equip, run.equip2]) if (sl[r] === it.uid) sl[r] = null; // used up
   }
   room.events.push({ type: 'used', id: it.id, role });
   if (it.id === 'reroll') room.loadStage();
@@ -832,6 +934,11 @@ function view(room) {
     items: run.items.map(item),
     personal: { fire: run.personal.fire.map(item), water: run.personal.water.map(item) },
     equip: run.equip,
+    equip2: run.equip2,
+    secondSlot: { fire: hasSecondSlot(run, 'fire'), water: hasSecondSlot(run, 'water') },
+    locked: { fire: !!exclusiveOf(run, 'fire'), water: !!exclusiveOf(run, 'water') },
+    ghost: run.ghost,
+    keenEye: teamCount(run, 'keeneye') > 0,
     effects: run.effects,
     map: run.map && {
       rarity: run.map.rarity,

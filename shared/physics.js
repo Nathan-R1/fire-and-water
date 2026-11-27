@@ -36,6 +36,8 @@
    *   flyT          seconds of flight left (Wings)
    *   acidImmune    acid doesn't kill (Acid skin)
    *   magnet        extra pickup reach for stars, in pixels (Magnet)
+   *   phase         passes through boxes, gates, platforms, mimics and other characters
+   *                 (not rock or pools), and nothing collides with it (Phase, Last Chance)
    */
   const BOX = { size: TILE };              // boxes are one tile; weight 1, same as a character
   const PULLEY = { speed: 80, thickness: 12 };
@@ -162,6 +164,7 @@
       pulleys: level.pulleys.map(() => ({ o: 0 })),
       geysers: [], // temporary updrafts (Challenge mode): { x, y, w, h, t }
       blocks: [],  // extra solid rects that don't move (Challenge mode mimics): { x, y, w, h }
+      safePools: [], // pool tiles made safe for everyone (Solidify): "x,y"
     };
   }
 
@@ -176,6 +179,7 @@
       pulleys: (s.pulleys || []).map((p) => ({ o: typeof p === 'number' ? p : p.o })),
       geysers: (s.geysers || []).map((g) => ({ ...g })),
       blocks: (s.blocks || []).map((b) => ({ ...b })),
+      safePools: (s.safePools || []).slice(),
     };
   }
 
@@ -258,6 +262,7 @@
   // Returns { hit, pushed }.
   function moveAxis(level, body, axis, d, bodies, state, canPush) {
     if (!d) return { hit: false, pushed: false };
+    if (body.phase) { state = null; bodies = []; canPush = false; } // only rock and pools stop it
     const before = rectOf(body);
     body[axis] += d;
     let hits = solidsIn(level, rectOf(body), bodies, state).filter((o) => !overlaps(before, o));
@@ -324,7 +329,7 @@
     } else if (touchesTile(level, rectOf(body), T.FAN) || inGeyser(state, rectOf(body))) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
     else body.vy = Math.min(body.vy + CHAR.gravity * dt, CHAR.maxFall);
 
-    const bodies = others.concat(state && state.boxes ? state.boxes : []);
+    const bodies = others.filter((o) => !o.phase).concat(state && state.boxes ? state.boxes : []);
     const mx = moveAxis(level, body, 'x', body.vx * dt, bodies, state, true);
     body.pushing = mx.pushed;
     if (mx.pushed) body.vx = Math.max(-CHAR.pushSpeed, Math.min(CHAR.pushSpeed, body.vx));
@@ -395,7 +400,7 @@
   function stepBoxes(level, state, chars, dt) {
     for (const box of state.boxes) {
       box.vy = Math.min(box.vy + CHAR.gravity * dt, CHAR.maxFall);
-      const others = chars.concat(state.boxes.filter((b) => b !== box));
+      const others = chars.filter((c) => !c.phase).concat(state.boxes.filter((b) => b !== box));
       const my = moveAxis(level, box, 'y', box.vy * dt, others, state, false);
       box.onGround = my.hit && box.vy > 0;
       if (my.hit) box.vy = 0;
@@ -443,7 +448,8 @@
 
   // Returns the deadly tile type under the character's feet, or 0. A few pixels at
   // each edge are forgiven so brushing a pool's corner isn't fatal.
-  function hazardUnder(level, body, element) {
+  function hazardUnder(level, body, element, state = null) {
+    const safe = state && state.safePools && state.safePools.length ? new Set(state.safePools) : null;
     if (!body.onGround) return 0;
     const feet = body.y + CHAR.height;
     if (Math.abs(feet - Math.round(feet / TILE) * TILE) > 0.5) return 0; // on a box or platform, not a tile
@@ -452,6 +458,7 @@
     for (let tx = tx0; tx <= tx1; tx++) {
       const t = tileAt(level, tx, ty);
       if (t === T.ACID && body.acidImmune) continue;
+      if (safe && safe.has(`${tx},${ty}`)) continue; // solidified
       if (isDeadly(t, element)) return t;
     }
     return 0;

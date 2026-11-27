@@ -738,3 +738,133 @@ test('Half Walls: the ground twin is shut in the middle room until a lever opens
   assert.ok(minX < 12 * T, `roamed out through the open gate (got to ${(minX / T).toFixed(1)})`);
   void def;
 });
+
+// ── drop batch 3 ──
+test('Wings: unlimited, 5 s between flights', () => {
+  const r = run(80);
+  C.grant(r, 'wings', 'fire');
+  assert.equal(C.use(r, 'fire'), true);
+  tick(r, 60 * 4);
+  assert.equal(C.use(r, 'fire'), false, 'still cooling down');
+  tick(r, 61);
+  assert.equal(C.use(r, 'fire'), true, 'again');
+});
+
+test('Stomp: landing on a sentry destroys it and bounces you; on a boss it stuns', () => {
+  const r = run(81);
+  arena(r, ['##########', '#........#', '#........#', '#........#', '#F.....Wfw', '##########']);
+  C.grant(r, 'stomp', 'fire');
+  const f = r.players.fire.body;
+  r.run.enemies = [{ type: 'sentry', x: 3 * T + 3, y: 5 * T - 18, w: 18, h: 18, stunT: 0 }];
+  Object.assign(f, { x: 3 * T + 2, y: 1 * T, vx: 0, vy: 0 });
+  tick(r, 40);
+  assert.equal(r.run.enemies[0].dead, true, 'destroyed');
+  assert.equal(r.phase, 'playing', 'and fire is fine');
+  r.run.enemies = [{ type: 'walker', x: 3 * T, x0: 0, x1: 1e4, floor: 5 * T, size: 30, size0: 30, size1: 30, grow: 1, speed: 0, dir: 1, stunT: 0 }];
+  Object.assign(f, { x: 3 * T + 4, y: 1 * T, vx: 0, vy: 0 });
+  tick(r, 30);
+  assert.ok(r.run.enemies[0].stunT > 0 && !r.run.enemies[0].dead, 'boss stunned, not destroyed');
+});
+
+test('Dual Wield: a second slot that can be equipped and used', () => {
+  const r = run(82);
+  C.grant(r, 'blast', null); C.grant(r, 'crate', null);
+  const crate = r.run.items.find((i) => i.id === 'crate');
+  assert.equal(C.equip(r, 'fire', crate.uid, 2), false, 'no second slot yet');
+  C.grant(r, 'dualwield', 'fire');
+  assert.equal(C.equip(r, 'fire', crate.uid, 2), true);
+  assert.equal(r.run.equip2.fire, crate.uid);
+  assert.equal(C.use(r, 'fire', 2), true, 'used from slot 2');
+  assert.equal(C.use(r, 'fire', 1), true, 'and slot 1 still works');
+});
+
+test('Phase is exclusive: equipped for good, no other actives, toggles passing through boxes', () => {
+  const r = run(83);
+  C.grant(r, 'blast', null); C.grant(r, 'dualwield', 'fire');
+  C.grant(r, 'phase', 'fire');
+  const phase = r.run.personal.fire.find((i) => i.id === 'phase');
+  assert.equal(r.run.equip.fire, phase.uid);
+  assert.equal(C.equip(r, 'fire', r.run.items[0].uid), false, "can't switch away");
+  assert.equal(C.use(r, 'fire', 2), false, 'no second slot while exclusive');
+  assert.equal(B.BY_ID.phase.exclusive, true, 'flag lives in the catalogue, reusable by other drops');
+  arena(r, ['##########', '#........#', '#........#', '#........#', '#F.....Wfw', '##########']);
+  C.onAttempt(r);
+  r.state.boxes.push({ x: 4 * T, y: 4 * T, w: T, h: T, vy: 0, onGround: true });
+  C.use(r, 'fire');
+  assert.equal(r.players.fire.body.phase, true);
+  for (let i = 0; i < 60; i++) { seq++; g.queueInput(r, 'fire', { s: seq, d: 1, j: false }); g.queueInput(r, 'water', { s: seq, d: 0, j: false }); r.run.started = true; g.step(r); }
+  assert.ok(r.players.fire.body.x > 5 * T, 'walked through the box');
+  C.use(r, 'fire');
+  assert.equal(r.players.fire.body.phase, false, 'toggled off');
+});
+
+test('Keen Eye: mimics can\'t hurt you', () => {
+  const r = run(84);
+  arena(r, ['###########', '#.........#', '#.........#', '#F......Wfw', '###########']);
+  r.enemySpecs = [{ type: 'mimic', x: 4 * T, y: 3 * T, w: T, h: T }];
+  C.onAttempt(r);
+  C.grant(r, 'keeneye', null);
+  r.players.fire.body.x = 2 * T;
+  for (let i = 0; i < 60; i++) { seq++; g.queueInput(r, 'fire', { s: seq, d: 1, j: false }); g.queueInput(r, 'water', { s: seq, d: 0, j: false }); r.run.started = true; g.step(r); }
+  assert.equal(r.phase, 'playing');
+});
+
+test('Slow Time: enemies 25% slower per copy (multiplies)', () => {
+  const dist = (copies) => {
+    const r = run(85);
+    arena(r, ['##################', '#................#', '#F.............Wfw', '##################']);
+    for (let k = 0; k < copies; k++) C.grant(r, 'slowtime', null);
+    r.run.enemies = [{ type: 'patrol', x: 3 * T, x0: 0, x1: 1e4, y: 2 * T, w: 20, h: 20, speed: 60, dir: 1, stunT: 0 }];
+    for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+    r.players.fire.body.x = 1e4; r.players.water.body.x = 1e4 + 100;
+    tick(r, 60);
+    return r.run.enemies[0].x - 3 * T;
+  };
+  const d0 = dist(0), d1 = dist(1), d2 = dist(2);
+  assert.ok(Math.abs(d1 / d0 - 0.75) < 0.02, `${d1 / d0}`);
+  assert.ok(Math.abs(d2 / d0 - 0.5625) < 0.02, `${d2 / d0}`);
+});
+
+test('Last Chance: get back to the start in 5 s and the room restarts with no heart lost; too slow and you die', () => {
+  const r = run(86);
+  arena(r, ['##########', '#........#', '#........#', '#F.....Wfw', '##########']);
+  r.enemySpecs = []; C.onAttempt(r);
+  C.grant(r, 'lastchance', null);
+  const f = r.players.fire.body;
+  const spawn = { ...r.level.spawns.fire };
+  f.x += 3 * T;
+  r.run.enemies = [{ type: 'sentry', x: f.x, y: f.y + 10, w: 18, h: 18, stunT: 0 }];
+  tick(r, 2);
+  assert.ok(r.run.ghost.fire > 4, 'counting down');
+  assert.equal(f.phase, true, 'intangible');
+  Object.assign(f, { x: spawn.x + 4, y: spawn.y }); // made it back
+  tick(r, 2);
+  assert.equal(r.run.hearts, C.HEARTS.start, 'no heart lost');
+  assert.equal(r.run.ghost.fire, 0);
+  // second time in the same attempt? it's once per room — reset gave it back; now be too slow
+  const f2 = r.players.fire.body;
+  f2.x += 3 * T;
+  r.run.enemies = [{ type: 'sentry', x: f2.x, y: f2.y + 10, w: 18, h: 18, stunT: 0 }];
+  tick(r, 2);
+  assert.ok(r.run.ghost.fire > 0);
+  r.run.enemies = [];
+  tick(r, 60 * 5 + 5);
+  assert.equal(r.phase, 'dead', "didn't make it");
+  assert.equal(r.run.hearts, C.HEARTS.start - 1);
+});
+
+test('Solidify: harden your own pool so your teammate can walk on it', () => {
+  const r = run(87);
+  arena(r, ['############', '#..........#', '#..........#', '#F.......Wfw', '###LLLL#####']);
+  r.enemySpecs = []; C.onAttempt(r);
+  C.grant(r, 'solidify', 'fire');
+  const f = r.players.fire.body, w = r.players.water.body;
+  Object.assign(f, { x: 4 * T + 2, y: 4 * T - P.CHAR.height - 1 });
+  tick(r, 5);
+  assert.equal(C.use(r, 'fire'), true);
+  assert.equal(r.state.safePools.length, 4, 'the whole connected pool');
+  Object.assign(w, { x: 5 * T + 2, y: 4 * T - P.CHAR.height - 1 });
+  tick(r, 30);
+  assert.equal(r.phase, 'playing', 'water stands on hardened lava');
+  assert.equal(C.use(r, 'fire'), false, 'once per room');
+});

@@ -218,10 +218,22 @@ function step(room) {
   }
 
   const hits = room.mode === 'challenge' && room.run.started ? C.updateEnemies(room, P.DT) : [];
+  if (room.resetRequested) { // Last Chance: made it back to the start
+    resetAttempt(room);
+    room.events.push({ type: 'restart' });
+    return;
+  }
+  if (room.mode === 'challenge' && room.run.ghostFailed) { // Last Chance ran out
+    const role = room.run.ghostFailed;
+    room.run.ghostFailed = null;
+    hits.push({ role, cause: 'lastchance' });
+  }
   for (const role of ROLES) {
     const body = room.players[role].body;
-    const killer = P.hazardUnder(room.level, body, role) || (hits.find((h) => h.role === role) || {}).cause;
-    if (killer && !(room.mode === 'challenge' && C.absorb(room, role))) {
+    const hazard = P.hazardUnder(room.level, body, role, room.state);
+    const hit = (hits.find((h) => h.role === role) || {}).cause;
+    const killer = hit === 'lastchance' ? hit : hazard || hit;
+    if (killer && !(room.mode === 'challenge' && killer !== 'lastchance' && C.absorb(room, role))) {
       room.phase = 'dead';
       room.phaseTicks = 0;
       room.deaths++;
@@ -258,7 +270,7 @@ function snapshot(room) {
       x: body.x, y: body.y, vx: body.vx, vy: body.vy,
       onGround: body.onGround, coyoteT: body.coyoteT, bufferT: body.bufferT, pushing: !!body.pushing,
       jumpMul: body.jumpMul || 1, speedMul: body.speedMul || 1, maxAirJumps: body.maxAirJumps || 0,
-      airJumps: body.airJumps || 0, flyT: body.flyT || 0, acidImmune: !!body.acidImmune, magnet: body.magnet || 0,
+      airJumps: body.airJumps || 0, flyT: body.flyT || 0, acidImmune: !!body.acidImmune, magnet: body.magnet || 0, phase: !!body.phase,
       ack, connected: !!socketId,
     };
   }
@@ -278,6 +290,7 @@ function snapshot(room) {
     pulleys: room.state.pulleys.map((p) => p.o),
     geysers: room.state.geysers || [],
     blocks: room.state.blocks || [],
+    safePools: room.state.safePools || [],
   };
 }
 

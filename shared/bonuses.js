@@ -9,6 +9,9 @@
 //   rarity  'common' | 'uncommon' after normal rooms (stars raise the uncommon chance),
 //           'rare' after boss rooms
 //   repeat  true: keeps being offered after you have it, and copies stack
+//   exclusive  true: replaces your other actives. Once you have it it's equipped for
+//           good: you can't switch away from it or use any other active item
+//   uses    'toggle'   switch it on and off as often as you like
 //   uses    'combat'   once per room attempt (recharges when the room starts or restarts)
 //           'once'     once per run; stays in the bar afterwards, used up
 //           'cooldown' unlimited, with `cooldown` seconds between uses
@@ -38,7 +41,16 @@
     { id: 'geyser', type: 'item', scope: 'team', color: 'yellow', rarity: 'common', uses: 'combat', name: 'Geyser',
       desc: 'An updraft bursts up where you\'re standing for 5 seconds, carrying anyone in it upwards. Once per room.',
       icon: svg('<path d="M8 21v-6M12 21V9M16 21v-6"/><path d="M9 6l3-3 3 3M6 10l2-2 2 2M14 10l2-2 2 2"/>') },
+    { id: 'keeneye', type: 'item', scope: 'team', color: 'green', rarity: 'common', name: 'Keen Eye',
+      desc: 'Decoys can\'t fool you: mimic boxes show their eyes and can\'t hurt you.',
+      icon: svg('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>') },
     // ── team, rare (after bosses) ──
+    { id: 'slowtime', type: 'item', scope: 'team', color: 'green', rarity: 'rare', repeat: true, name: 'Slow Time',
+      desc: 'Enemies and their shots move 25% slower. Stacks.',
+      icon: svg('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>') },
+    { id: 'lastchance', type: 'item', scope: 'team', color: 'green', rarity: 'rare', name: 'Last Chance',
+      desc: 'Once per room, when one of you would die they turn intangible for 5 seconds instead: get back to your start in time and the room restarts with no heart lost.',
+      icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 8v4l2 1"/>') },
     { id: 'swap', type: 'item', scope: 'team', color: 'yellow', rarity: 'rare', uses: 'cooldown', cooldown: 1, name: 'Swap',
       desc: 'You and your partner swap places instantly. As often as you like.',
       icon: svg('<path d="M4 8h13l-3-3M20 16H7l3 3"/>') },
@@ -77,6 +89,12 @@
     { id: 'ward', type: 'item', scope: 'personal', color: 'green', rarity: 'uncommon', repeat: true, name: 'Element Ward',
       desc: 'Stepping into your own element (lava for Fire, water for Water) shields you from everything for 1 second. Stacks: +1 second per copy.',
       icon: svg('<path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/><path d="M12 8c1.5 2 2.5 3 2.5 4.5a2.5 2.5 0 0 1-5 0C9.5 11 10.5 10 12 8z"/>') },
+    { id: 'stomp', type: 'item', scope: 'personal', color: 'green', rarity: 'uncommon', name: 'Stomp',
+      desc: 'Land on an enemy from above to destroy it (bigger ones and bosses are stunned instead) and bounce off.',
+      icon: svg('<path d="M7 3h6l1 9h4v4H6z"/><path d="M4 21h16M8 18l-2 3M16 18l2 3"/>') },
+    { id: 'solidify', type: 'item', scope: 'personal', color: 'yellow', rarity: 'uncommon', uses: 'combat', name: 'Solidify',
+      desc: 'While standing in your own element, harden that whole pool so your teammate can walk on it, for the rest of the room. Once per room.',
+      icon: svg('<path d="M3 17h18M5 17l2-5h10l2 5"/><path d="M8 12l1-3h6l1 3"/>') },
     { id: 'beacon', type: 'item', scope: 'personal', color: 'yellow', rarity: 'uncommon', uses: 'combat', name: 'Beacon',
       desc: 'Teleport to your teammate. Once per room.',
       icon: svg('<circle cx="12" cy="8" r="3"/><path d="M12 11v10M8 21h8"/><path d="M5 5a10 10 0 0 0 0 6M19 5a10 10 0 0 1 0 6"/>') },
@@ -84,8 +102,14 @@
     { id: 'doublejump', type: 'item', scope: 'personal', color: 'green', rarity: 'rare', name: 'Double Jump',
       desc: 'Jump again in mid-air.',
       icon: svg('<path d="M12 21V11M8 15l4-4 4 4"/><path d="M12 11V3M8 7l4-4 4 4"/>') },
-    { id: 'wings', type: 'item', scope: 'personal', color: 'yellow', rarity: 'rare', uses: 'combat', duration: 3, name: 'Wings',
-      desc: 'Fly upwards for 3 seconds. Once per room.',
+    { id: 'dualwield', type: 'item', scope: 'personal', color: 'green', rarity: 'rare', name: 'Dual Wield',
+      desc: 'A second active slot with its own button: two active items ready at once.',
+      icon: svg('<rect x="3" y="7" width="8" height="10" rx="2"/><rect x="13" y="7" width="8" height="10" rx="2"/>') },
+    { id: 'phase', type: 'item', scope: 'personal', color: 'yellow', rarity: 'rare', uses: 'toggle', exclusive: true, name: 'Phase',
+      desc: 'Toggle on to pass through boxes, gates, platforms, mimics and your teammate (not walls or floors). You still take damage. Replaces your other actives: once you have it, it\'s your only one.',
+      icon: svg('<circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/><path d="M8 12h8"/>') },
+    { id: 'wings', type: 'item', scope: 'personal', color: 'yellow', rarity: 'rare', uses: 'cooldown', cooldown: 5, duration: 3, name: 'Wings',
+      desc: 'Fly upwards for 3 seconds. Unlimited, with 5 seconds between flights.',
       icon: svg('<path d="M12 12c-3-6-8-6-10-5 1 4 4 7 10 7"/><path d="M12 12c3-6 8-6 10-5-1 4-4 7-10 7"/><path d="M12 12v8"/>') },
   ];
 

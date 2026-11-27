@@ -109,8 +109,8 @@ io.on('connection', (socket) => {
 
   // ── Challenge mode ──
   const owns = (r) => ctl && ctl.roles.has(r);
-  socket.on('use', (msg) => { if (room && room.state.mode === 'challenge' && owns(msg && msg.r)) game.C.use(room.state, msg.r); });
-  socket.on('equip', (msg) => { if (room && room.state.mode === 'challenge' && msg && owns(msg.r)) game.C.equip(room.state, msg.r, msg.uid); });
+  socket.on('use', (msg) => { if (room && room.state.mode === 'challenge' && owns(msg && msg.r)) game.C.use(room.state, msg.r, msg.slot === 2 ? 2 : 1); });
+  socket.on('equip', (msg) => { if (room && room.state.mode === 'challenge' && msg && owns(msg.r)) game.C.equip(room.state, msg.r, msg.uid, msg.slot === 2 ? 2 : 1); });
   socket.on('map', (msg) => { if (room && room.state.mode === 'challenge' && msg && owns(msg.r)) game.C.act(room.state, msg.r, msg); });
   // Dev only: finish the current room straight away (both treated as at their doors).
   socket.on('dev-skip', () => {
