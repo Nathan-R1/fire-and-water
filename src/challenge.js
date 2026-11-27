@@ -338,7 +338,9 @@ function onComplete(room) {
   const teamOwned = new Set(run.items.map((i) => i.id));
   const personal = {};
   // each player's offer is drawn independently: both can be offered the same thing
-  for (const r of ROLES) personal[r] = offer(run, 'personal', 2, new Set(ownedIds(run, r)), chance, boss);
+  // repeatable items (Spring, Swift, Magnet) stay on offer after you have them
+  const notRepeat = (ids) => new Set(ids.filter((id) => !B.BY_ID[id].repeat));
+  for (const r of ROLES) personal[r] = offer(run, 'personal', 2, notRepeat(ownedIds(run, r)), chance, boss);
   run.map = {
     rarity: boss ? 'rare' : 'common',
     uncommonChance: boss ? 0 : chance,

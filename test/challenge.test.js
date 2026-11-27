@@ -366,3 +366,32 @@ test('Recall and Beacon teleport; Create Box drops a box; Geyser lifts you', () 
   tick(r, 40);
   assert.ok(r.players.water.body.y < y0 - 2 * T, 'carried upwards');
 });
+
+test('Spring, Swift and Magnet keep being offered and stack; other personal items are offered once', () => {
+  const r = run(30, { both: true });
+  for (let k = 0; k < 3; k++) { C.grant(r, 'spring', 'fire'); C.grant(r, 'magnet', 'fire'); C.grant(r, 'swift', 'fire'); }
+  C.grant(r, 'acidskin', 'fire'); C.grant(r, 'recall', 'fire');
+  g.restart(r);
+  const f = r.players.fire.body;
+  assert.ok(Math.abs(f.jumpMul - 1.45) < 1e-9);
+  assert.ok(Math.abs(f.speedMul - 1.45) < 1e-9);
+  assert.equal(f.magnet, 90);
+  // offers after a room: repeatables still appear, owned one-offs don't
+  const seen = new Set();
+  for (let k = 0; k < 60; k++) {
+    finishRoom(r);
+    for (const id of r.run.map.personal.options.fire) seen.add(id);
+    r.run.map = null; r.phase = 'playing'; r.run.stage = 0; r.loadStage();
+  }
+  assert.ok(seen.has('spring') && seen.has('swift') && seen.has('magnet'), [...seen].join(','));
+  assert.ok(!seen.has('acidskin') && !seen.has('recall'), [...seen].join(','));
+});
+
+test('stacked Springs never jump faster than one tile per tick', () => {
+  const L = P.parseLevel({ id: 'p', rows: ['#####', '#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '#FWfw', '#####'].map((x) => x.padEnd(5, '#')) });
+  const b = P.createBody(L.spawns.fire);
+  for (let i = 0; i < 5; i++) P.stepBody(L, b, {}, []);
+  b.jumpMul = 10;
+  P.pressJump(b); P.stepBody(L, b, {}, []);
+  assert.ok(-b.vy * P.DT < P.TILE, `moved ${-b.vy * P.DT}px in one tick`);
+});

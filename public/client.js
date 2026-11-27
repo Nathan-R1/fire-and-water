@@ -715,7 +715,18 @@
       if (!r.personal[role].length) continue;
       const sep = document.createElement('span'); sep.className = 'sep'; add(sep);
       add(label(roleIcon(role)));
-      for (const it of r.personal[role]) add(itemChip(it, role));
+      // copies of the same passive show once, with ×2, ×3…
+      const counts = {};
+      for (const it of r.personal[role]) if (Bonuses.BY_ID[it.id].color === 'green') counts[it.id] = (counts[it.id] || 0) + 1;
+      const shown = new Set();
+      for (const it of r.personal[role]) {
+        const green = Bonuses.BY_ID[it.id].color === 'green';
+        if (green && shown.has(it.id)) continue;
+        shown.add(it.id);
+        const el = itemChip(it, role);
+        if (green && counts[it.id] > 1) { const x = document.createElement('span'); x.className = 'count'; x.textContent = `×${counts[it.id]}`; el.append(x); }
+        add(el);
+      }
     }
   }
 

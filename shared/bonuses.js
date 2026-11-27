@@ -8,6 +8,7 @@
 //           'green'    passive: always on (for the team, or for its owner)
 //   rarity  'common' | 'uncommon' after normal rooms (stars raise the uncommon chance),
 //           'rare' after boss rooms
+//   repeat  true: keeps being offered after you have it, and copies stack
 //   uses    'combat'   once per room attempt (recharges when the room starts or restarts)
 //           'once'     once per run; stays in the bar afterwards, used up
 //           'cooldown' unlimited, with `cooldown` seconds between uses
@@ -48,17 +49,17 @@
       desc: 'Hearts refilled to the maximum, and the maximum goes up by 1.',
       icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 8v6M9.5 10.5L12 8l2.5 2.5"/>') },
     // ── personal, common ──
-    { id: 'spring', type: 'item', scope: 'personal', color: 'green', rarity: 'common', name: 'Spring',
-      desc: 'You jump higher.',
+    { id: 'spring', type: 'item', scope: 'personal', color: 'green', rarity: 'common', repeat: true, name: 'Spring',
+      desc: 'You jump 15% higher. Stacks.',
       icon: svg('<path d="M6 20h12M8 16l8-2-8-2 8-2-8-2 8-2"/><path d="M12 4V2"/>') },
     { id: 'acidskin', type: 'item', scope: 'personal', color: 'green', rarity: 'common', name: 'Acid Skin',
       desc: 'Acid can\'t hurt you, including the boss\'s acid floor.',
       icon: svg('<path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11z"/><path d="M9 14l2 2 4-4"/>') },
-    { id: 'magnet', type: 'item', scope: 'personal', color: 'green', rarity: 'common', name: 'Magnet',
-      desc: 'You collect stars from further away.',
+    { id: 'magnet', type: 'item', scope: 'personal', color: 'green', rarity: 'common', repeat: true, name: 'Magnet',
+      desc: 'You collect stars from further away. Stacks.',
       icon: svg('<path d="M6 4v8a6 6 0 0 0 12 0V4"/><path d="M6 8h4M14 8h4"/>') },
-    { id: 'swift', type: 'item', scope: 'personal', color: 'green', rarity: 'common', name: 'Swift',
-      desc: 'You run faster.',
+    { id: 'swift', type: 'item', scope: 'personal', color: 'green', rarity: 'common', repeat: true, name: 'Swift',
+      desc: 'You run 15% faster. Stacks.',
       icon: svg('<path d="M4 12h10M6 8h8M6 16h8"/><path d="M15 6l5 6-5 6"/>') },
     { id: 'recall', type: 'item', scope: 'personal', color: 'yellow', rarity: 'common', uses: 'combat', name: 'Recall',
       desc: 'Teleport back to your starting spot. Once per room.',
@@ -88,15 +89,16 @@
   const BY_ID = Object.fromEntries(LIST.map((b) => [b.id, b]));
   const pool = (scope, rarity) => LIST.filter((b) => b.scope === scope && b.rarity === rarity);
 
-  // Per-character physics modifiers from a player's personal passive items.
+  // Per-character physics modifiers from a player's personal passive items. Spring,
+  // Swift and Magnet stack: each copy adds the same amount again.
   function mods(ids) {
-    const has = (id) => ids.includes(id);
+    const count = (id) => ids.filter((x) => x === id).length;
     return {
-      jumpMul: has('spring') ? 1.15 : 1,
-      speedMul: has('swift') ? 1.15 : 1,
-      maxAirJumps: has('doublejump') ? 1 : 0,
-      acidImmune: has('acidskin'),
-      magnet: has('magnet') ? 30 : 0,
+      jumpMul: 1 + 0.15 * count('spring'),
+      speedMul: 1 + 0.15 * count('swift'),
+      maxAirJumps: count('doublejump') ? 1 : 0,
+      acidImmune: count('acidskin') > 0,
+      magnet: 30 * count('magnet'),
     };
   }
 

@@ -302,7 +302,8 @@
 
     body.coyoteT = body.onGround ? CHAR.coyote : Math.max(0, body.coyoteT - dt);
     if (body.onGround) body.airJumps = body.maxAirJumps || 0;
-    const jumpVel = CHAR.jumpVel * (body.jumpMul || 1);
+    // Stacked Springs: capped just under one tile per tick so you can't jump through rock.
+    const jumpVel = Math.min(CHAR.jumpVel * (body.jumpMul || 1), (TILE - 1) / DT);
     if (body.bufferT > 0 && body.coyoteT > 0) {
       body.vy = -jumpVel;
       body.bufferT = 0;
