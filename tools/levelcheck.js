@@ -42,6 +42,14 @@ function analyse(def) {
   for (const b of level.boxes) {
     if (P.isSolid(level, b.tx, b.ty)) errors.push(`box at (${b.tx},${b.ty}) starts inside rock`);
   }
+  // In a level with boxes, a box pushed into a pool is a stepping stone: allow standing
+  // on top of a box resting on any pool tile (coarse, like the partner boost).
+  if (level.boxes.length) {
+    for (let y = 1; y < level.height; y++) for (let x = 0; x < level.width; x++) {
+      const t = P.tileAt(level, x, y);
+      if ((t === T.LAVA || t === T.WATER || t === T.ACID) && !P.isSolid(level, x, y - 1)) platFloor.add(`${x},${y - 1}`);
+    }
+  }
 
   function reach(element, { boost, gatesSolid }) {
     const tile = (x, y) => P.tileAt(level, x, y);
@@ -104,6 +112,7 @@ function analyse(def) {
       // Riding a pulley platform: it can carry you to any height it reaches.
       if (platFloor.has(`${x},${y + 1}`) && !solid(x, y + 1)) {
         for (let yy = 1; yy < level.height - 1; yy++) if (platFloor.has(`${x},${yy + 1}`)) add(x, yy);
+        fall(x, y + 1); // or the platform/box isn't there: drop to what's below
       }
       for (const d of [-1, 1]) {
         // walk, or walk off an edge / into a fan

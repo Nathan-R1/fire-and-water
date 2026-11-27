@@ -1,6 +1,6 @@
-// Generator for levels 33–64 (boxes and pulleys). The JSON files it writes are the
+// Generator for levels 33–58 (boxes and pulleys). The JSON files it writes are the
 // source of truth; this script is kept so the drafts can be regenerated while tuning.
-// Usage: node tools/gen-levels-33-64.js
+// Usage: node tools/gen-levels-33-58.js (levels 59–64: tools/gen-levels-59-64.js)
 //
 // Geometry cheat sheet (40×23 tiles, floor top at row 21, so you stand in row 20):
 //   jump: up 3 tiles, or 4 with a boost (partner or box); across 4 tiles on the flat
@@ -397,77 +397,7 @@ level(58, 'lava-works', 'Lava Works', 8, (L) => {
   L.put(30, 12, 'r'); L.put(23, 5, 'b'); L.put(20, 19, 'r'); L.put(26, 4, 'b');
 });
 
-level(59, 'water-works', 'Water Works', 8, (L) => {
-  counterweight(L, 'fire');
-  L.put(2, 13, 'W'); L.put(4, 13, 'F'); L.box(9, 13);
-  L.lever(28, 20, 1);
-  L.wall(32, 1, 4); L.gate(32, 5, 1, 3, 1);
-  L.put(35, 7, 'f'); L.put(36, 20, 'w');
-  L.put(27, 4, 'r'); L.put(30, 19, 'b'); L.put(23, 5, 'r'); L.put(20, 19, 'b');
-});
+// Levels 59–64 live in tools/gen-levels-59-64.js.
 
-level(60, 'switchyard', 'Switchyard', 8, (L) => {
-  L.put(2, 20, 'F'); L.put(4, 20, 'W');
-  L.lever(7, 20, 1, { toggle: true });
-  L.wall(10, 1, 16); L.gate(10, 17, 1, 4, 1);
-  L.box(13, 20); L.plate(17, 20, 2);
-  L.wall(20, 1, 16); L.gate(20, 17, 1, 4, 2);
-  L.wall(24, 1, 16); L.gate(24, 17, 1, 4, 1, true);
-  L.lever(27, 20, 1, { toggle: true, dir: -1 });
-  L.pool(30, 31, 21, '~'); L.put(30, 18, 'r');
-  L.pool(33, 34, 21, 'L'); L.put(34, 18, 'b');
-  L.put(36, 20, 'f'); L.put(38, 20, 'w');
-  L.put(15, 18, 'r'); L.put(22, 18, 'b');
-});
-
-level(61, 'updraft-lift', 'Updraft Lift', 8, (L) => {
-  pulleyStep(L, 1);
-  L.put(2, 16, 'F'); L.put(4, 16, 'W'); L.box(9, 16);
-  L.fan(30, 31, 4, 10);
-  L.plat(32, 38, 4);
-  L.pool(27, 28, 11, '~'); L.pool(34, 35, 4, 'L');
-  L.put(30, 6, 'r'); L.put(31, 6, 'b'); L.put(23, 12, 'r'); L.put(23, 11, 'b');
-  L.put(33, 3, 'f'); L.put(37, 3, 'w');
-});
-
-level(62, 'crate-relay', 'Crate Relay', 8, (L) => {
-  L.ground(1, 9, 14);
-  L.put(2, 13, 'F'); L.put(4, 13, 'W');
-  L.box(7, 13);
-  L.plate(13, 20, 1);
-  L.wall(20, 1, 16); L.gate(20, 17, 1, 4, 1);
-  L.box(23, 20);
-  L.ground(27, 38, 17);
-  L.pool(28, 29, 17, 'L'); L.pool(32, 33, 17, '~');
-  L.put(28, 14, 'b'); L.put(33, 14, 'r');
-  L.put(35, 16, 'f'); L.put(37, 16, 'w');
-  L.plat(10, 12, 17);
-});
-
-level(63, 'tipping-point', 'Tipping Point', 8, (L) => {
-  L.ground(1, 4, 15); L.put(2, 14, 'F'); L.put(3, 14, 'W');
-  seesaw(L, 6);
-  L.ground(16, 22, 15); L.box(18, 14);
-  seesaw(L, 24);
-  L.pool(1, 33, 21, 'A');
-  L.ground(34, 38, 15);
-  L.plate(20, 14, 1);
-  L.wall(35, 1, 10); L.gate(35, 11, 1, 4, 1);
-  L.put(7, 12, 'r'); L.put(13, 12, 'b'); L.put(25, 12, 'b'); L.put(31, 12, 'r');
-  L.put(36, 14, 'f'); L.put(38, 14, 'w');
-});
-
-level(64, 'grand-machine', 'The Grand Machine', 8, (L) => {
-  counterweight(L, 'water');
-  L.put(2, 13, 'F'); L.put(3, 13, 'W');
-  L.plate(5, 13, 1); L.box(8, 13);
-  L.wall(11, 1, 9); L.gate(11, 10, 1, 4, 1);        // wedge the box, then use it as the weight
-  L.lever(24, 20, 2);                               // fire, down in the works…
-  L.fan(33, 34, 8, 20);                             // …rides the updraft back up…
-  L.wall(29, 1, 4); L.gate(29, 5, 1, 3, 2);         // …to the exits behind the gate
-  L.pool(26, 27, 8, '~');
-  L.put(36, 7, 'f'); L.put(38, 7, 'w');
-  L.put(20, 19, 'r'); L.put(27, 19, 'r'); L.put(23, 5, 'b'); L.put(31, 6, 'b');
-});
-
-console.log('written', fs.readdirSync(OUT).filter((f) => /^\d\d-/.test(f)).length);
+if (require.main === module) console.log('written', fs.readdirSync(OUT).filter((f) => /^\d\d-/.test(f)).length);
+module.exports = { level };
