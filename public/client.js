@@ -716,8 +716,9 @@
   }
 
   // Items (team) and powers (per player) under the HUD. Tap one for its description.
+  const showMate = { fire: false, water: false }; // teammate's items: hidden until you tap their icon
   function renderBar(r) {
-    const key = JSON.stringify([r.items, r.personal, r.equip, myRoles]);
+    const key = JSON.stringify([r.items, r.personal, r.equip, myRoles, showMate]);
     if (key === lastBar) return;
     lastBar = key;
     const bar = $('bar');
@@ -741,10 +742,27 @@
       return chip(b, `${b.color}${off ? ' spent' : ''}${it.spent ? ' gone' : ''}`, it.spent ? '✕' : who, () => showTip(b, it, owner));
     };
     for (const it of r.items) add(itemChip(it, null));
-    for (const role of ['fire', 'water']) {
+    const order = ['fire', 'water'].sort((x, y) => myRoles.includes(y) - myRoles.includes(x)); // yours first
+    for (const role of order) {
+      // Your own items always show; a teammate's are behind their icon (tap to toggle).
+      const mine = myRoles.includes(role);
+      if (!mine) {
+        const sep = document.createElement('span'); sep.className = 'sep'; add(sep);
+        const t = document.createElement('button');
+        t.type = 'button';
+        t.className = `chip mate${showMate[role] ? ' open' : ''}`;
+        const n = r.personal[role].length;
+        t.innerHTML = `<span>${roleIcon(role)}</span><span class="who">${showMate[role] ? '▾' : '▸'}</span>${n ? `<span class="count">${n}</span>` : ''}`;
+        t.setAttribute('aria-label', `${showMate[role] ? 'Hide' : 'Show'} ${role === 'fire' ? 'Fire' : 'Water'}'s items`);
+        t.addEventListener('click', (e) => { e.stopPropagation(); showMate[role] = !showMate[role]; lastBar = ''; renderBar(run); });
+        add(t);
+        if (!showMate[role]) continue;
+      }
       if (!r.personal[role].length) continue;
-      const sep = document.createElement('span'); sep.className = 'sep'; add(sep);
-      add(label(roleIcon(role)));
+      if (mine) {
+        const sep = document.createElement('span'); sep.className = 'sep'; add(sep);
+        add(label(roleIcon(role)));
+      }
       // copies of the same passive show once, with ×2, ×3…
       const counts = {};
       for (const it of r.personal[role]) if (Bonuses.BY_ID[it.id].color === 'green') counts[it.id] = (counts[it.id] || 0) + 1;
