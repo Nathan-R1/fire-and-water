@@ -11,9 +11,9 @@ const TICKS = { exitHold: 30, deathPause: 60, completePause: 180 }; // at 60 Hz
 // Per-player input buffer. Clients send one input per 60 Hz tick and the server steps
 // each character once per input, so the client can predict its own character exactly.
 // If inputs arrive late the character waits (up to MAX_WAIT ticks) instead of moving on
-// a guess; after that it carries on with its last input (e.g. connection dropped).
-// When inputs pile up it applies two per tick to catch up.
-const MAX_WAIT = 8;
+// a guess. After that it only stops: it never keeps walking on an old input, so a
+// delayed jump can't walk you into lava. When inputs pile up it applies two per tick.
+const MAX_WAIT = 30; // 0.5 s
 const CATCH_UP_AT = 3;
 const MAX_QUEUE = 120;
 
@@ -130,7 +130,10 @@ function nextSteps(room) {
     const p = room.players[role];
     const n = p.queue.length > CATCH_UP_AT ? 2 : p.queue.length ? 1 : 0;
     if (n === 0) {
-      if (p.socketId && ++p.waited <= MAX_WAIT) continue; // wait for the late input
+      if (p.socketId) {
+        if (++p.waited <= MAX_WAIT) continue; // wait for the late input
+        p.input = { left: false, right: false }; // stalled too long: stand still
+      }
       steps.push([role, null]);
       continue;
     }

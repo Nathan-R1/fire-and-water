@@ -46,15 +46,16 @@ test('one physics step per input: ack advances one per tick', () => {
   assert.equal(r.players.fire.ack, 2);
 });
 
-test('a character with no input waits instead of guessing, then carries on', () => {
+test('a stalled character waits, then stops rather than walking on its old input', () => {
   const r = newRoom();
-  g.queueInput(r, 'fire', { s: 1, d: 1, j: false });
-  g.step(r);
+  for (let s = 1; s <= 20; s++) { g.queueInput(r, 'fire', { s, d: 1, j: false }); g.step(r); } // full speed, queue empty
   const x = r.players.fire.body.x;
   for (let i = 0; i < g.MAX_WAIT; i++) g.step(r);
   assert.equal(r.players.fire.body.x, x, 'frozen while waiting');
-  g.step(r);
-  assert.ok(r.players.fire.body.x > x, 'moves on its last input after MAX_WAIT');
+  for (let i = 0; i < 60; i++) g.step(r);
+  const b = r.players.fire.body;
+  assert.equal(b.vx, 0, 'stopped');
+  assert.ok(b.x - x < 12, `slid only ${(b.x - x).toFixed(1)}px`);
 });
 
 test('a backlog is worked off two inputs per tick', () => {
@@ -135,3 +136,32 @@ for (const jitter of [0, 4, g.MAX_WAIT - 1]) {
     }
   });
 }
+
+test('a predicted death happens on the same input as the server death', () => {
+  const LAVA = { id: 'lava', name: 'lava', rows: [
+    '############',
+    '#..........#',
+    '#F.W.....fw#',
+    '#.....LL####',
+    '############',
+  ].map((row, i) => (i === 3 ? '######LL####' : row)) };
+  const r = g.createRoom('NETL', { levels: [LAVA] });
+  g.join(r, 'a'); g.join(r, 'b'); g.takeEvents(r);
+  // Client side: predict water walking right from the spawn until a hazard is hit.
+  const me = P.createBody(r.level.spawns.water);
+  let predictedSeq = null;
+  for (let s = 1; s <= 60 && !predictedSeq; s++) {
+    P.stepBody(r.level, me, { left: false, right: true }, [r.players.fire.body], P.DT, r.state);
+    if (P.hazardUnder(r.level, me, 'water')) predictedSeq = s;
+  }
+  assert.ok(predictedSeq, 'prediction hit the lava');
+  // Server side: same inputs.
+  let deathAck = null;
+  for (let s = 1; s <= 60 && !deathAck; s++) {
+    g.queueInput(r, 'water', { s, d: 1, j: false });
+    g.queueInput(r, 'fire', { s, d: 0, j: false });
+    g.step(r);
+    if (g.takeEvents(r).some((e) => e.type === 'death' && e.role === 'water')) deathAck = r.players.water.ack;
+  }
+  assert.equal(deathAck, predictedSeq);
+});

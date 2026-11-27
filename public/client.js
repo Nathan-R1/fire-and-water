@@ -52,6 +52,7 @@
   let seq = 0;
   let jumpQueued = false;
   let errX = 0, errY = 0; // visual offset left over from corrections, decays to 0
+  let meDead = false;     // we predicted a death: hold still until the server answers
   let statusOverride = null;
 
   function setLevel(info) {
@@ -61,6 +62,7 @@
     target = null;
     snaps = [];
     me = null;
+    meDead = false;
     pending = [];
     $('levelnum').textContent = `${levelIndex + 1}/${levelTotal}`;
     $('levelname').textContent = level.name;
@@ -69,7 +71,8 @@
   }
 
   // ---- Networking ----
-  const socket = io();
+  // WebSocket straight away (no slow polling start); polling only if that fails.
+  const socket = io({ transports: ['websocket', 'polling'], tryAllTransports: true });
   socket.on('connect', () => socket.emit('join', { code, level: startLevel }));
   socket.on('disconnect', () => { $('status').textContent = 'Reconnecting…'; });
   socket.on('error-msg', (msg) => { $('status').textContent = msg; });
@@ -107,7 +110,7 @@
       showBanner(`<b>Oops!</b>${who} fell in the ${CAUSE[e.cause] || 'hazard'}`, 1000);
       if (e.role === myRole) navigator.vibrate?.([40, 40, 80]);
     } else if (e.type === 'restart') {
-      me = null; errX = errY = 0;
+      me = null; meDead = false; errX = errY = 0;
     } else if (e.type === 'gem') {
       if (e.role === myRole) navigator.vibrate?.(15);
     } else if (e.type === 'complete') {
@@ -241,9 +244,11 @@
     return target ? [target[other]] : [];
   }
 
+  // Returns true if this step lands us in a deadly pool (same check as the server).
   function predictStep(inp) {
     if (inp.j) Physics.pressJump(me);
     Physics.stepBody(level, me, toInput(inp.d), partnerBody(), Physics.DT, target);
+    return Physics.hazardUnder(level, me, myRole) !== 0;
   }
 
   function clientTick() {
@@ -256,7 +261,7 @@
     // server state once the server has a position for us.
     pending.push(inp);
     if (pending.length > 120) pending.shift(); // ~2 s without an ack: give up on old ones
-    if (me) predictStep(inp);
+    if (me && !meDead && predictStep(inp)) meDead = true;
   }
 
   function reconcile(s) {
@@ -264,7 +269,10 @@
     const before = me && { x: me.x, y: me.y };
     me = { x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT };
     pending = pending.filter((p) => p.s > srv.ack);
-    if (s.phase === 'playing') for (const p of pending) predictStep(p);
+    // Replay; if the replay hits a pool, freeze there. If the server disagrees, the
+    // next snapshot replays without hitting it and we carry on.
+    meDead = false;
+    if (s.phase === 'playing') for (const p of pending) if (predictStep(p)) { meDead = true; break; }
     if (before) {
       // Hide small corrections by easing them out; snap on big ones (respawn, teleport).
       const dx = before.x - me.x + errX, dy = before.y - me.y + errY;
@@ -451,7 +459,7 @@
 
   function drawChar(role, p, t, s) {
     const { width: w, height: h } = CHAR;
-    const dead = s.phase === 'dead';
+    const dead = s.phase === 'dead' || t.dead;
     ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : 1;
     ctx.fillStyle = COLORS[role];
     ctx.fillRect(p.x, p.y, w, h);
@@ -494,7 +502,7 @@
       const pos = role === myRole && me && playing()
         ? { x: me.x + errX, y: me.y + errY }
         : role === myRole ? { x: target[role].x, y: target[role].y } : interpolated(role, now);
-      drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx } : target[role], target);
+      drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx, dead: meDead } : target[role], target);
     }
   }
   requestAnimationFrame(frame);
