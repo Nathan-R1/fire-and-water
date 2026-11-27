@@ -10,7 +10,7 @@
 <body>
   <header id="hud">
     <span id="status">Connecting…</span>
-    <span id="levelinfo"><b id="levelnum">–</b> <span id="levelname"></span> · <span id="timer">0:00</span> · <span id="gemcount"></span></span>
+    <span id="levelinfo"><button id="levelbtn" type="button" title="Choose a level (L)"><b id="levelnum">–</b> <span id="levelname"></span> ▾</button> · <span id="timer">0:00</span> · <span id="gemcount"></span></span>
     <span class="hud-right">
       <span id="ping" title="Round trip to the server"></span>
       <button id="swap" type="button" aria-label="Switch character" title="Switch character (Tab)">⇄</button>
@@ -23,6 +23,10 @@
   <main id="stage">
     <canvas id="game"></canvas>
     <div id="banner" hidden></div>
+    <div id="levelpicker" hidden>
+      <div class="picker-head"><b>Choose a level</b><button id="pickerclose" type="button" aria-label="Close">✕</button></div>
+      <div id="levellist"></div>
+    </div>
   </main>
   <span id="rotate">↻ Rotate for a bigger view</span>
 

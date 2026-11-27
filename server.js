@@ -9,6 +9,7 @@ const db = require('./src/db');
 const PORT = process.env.PORT || 3000;
 const SNAPSHOT_MS = 1000 / 30;
 const ROOM_CODE_RE = /^[A-Z0-9]{4,8}$/;
+const EMPTY_ROOM_MS = Number(process.env.EMPTY_ROOM_MS) || 60 * 1000; // keep an empty room (and its level) this long, e.g. across a reload
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
@@ -47,6 +48,8 @@ io.on('connection', (socket) => {
       db.roomCreated(code).then((id) => { entry.dbId = id; });
     }
     room = entry;
+    clearTimeout(room.emptyTimer); // someone came back before it expired
+    room.emptyTimer = null;
     let role = game.join(room.state, socket.id);
     if (!role) {
       // Room full, but if one device is controlling both, take its spare character.
@@ -67,6 +70,7 @@ io.on('connection', (socket) => {
     socket.emit('joined', {
       code, role, roles: [...ctl.roles], char: P.CHAR, tile: P.TILE,
       level: { index: s.levelIndex, total: s.levels.length, def: s.levelDef },
+      levels: s.levels.map((l) => ({ name: l.name, world: l.world })),
     });
   });
 
@@ -99,13 +103,26 @@ io.on('connection', (socket) => {
     if (ctl && ctl.roles.size) game.restart(room.state);
   });
 
+  // Level picker: jump the whole room to level index n (0-based).
+  socket.on('goto', (n) => {
+    if (!ctl || !ctl.roles.size) return;
+    if (!Number.isInteger(n) || n < 0 || n >= room.state.levels.length) return;
+    game.loadLevel(room.state, n);
+  });
+
   socket.on('disconnect', () => {
     if (!room) return;
     game.leave(room.state, socket.id);
     room.controllers.delete(socket.id);
     if (game.isEmpty(room.state) && io.sockets.adapter.rooms.get(room.state.code) == null) {
-      rooms.delete(room.state.code);
-      db.roomEnded(room.dbId);
+      const entry = room;
+      clearTimeout(entry.emptyTimer);
+      entry.emptyTimer = setTimeout(() => {
+        const code = entry.state.code;
+        if (rooms.get(code) !== entry || io.sockets.adapter.rooms.get(code) != null) return;
+        rooms.delete(code);
+        db.roomEnded(entry.dbId);
+      }, EMPTY_ROOM_MS);
     }
   });
 });

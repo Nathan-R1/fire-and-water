@@ -80,6 +80,7 @@
   socket.on('joined', (msg) => {
     CHAR = msg.char;
     TILE = msg.tile;
+    levelList = msg.levels || [];
     setLevel(msg.level);
     setRoles(msg.roles || [], msg.role);
   });
@@ -87,6 +88,37 @@
   // Which characters this device controls, and which one the buttons drive.
   // One device can hold both (for testing alone); the other one stands still.
   let myRoles = [];
+
+  // ---- Level picker ----
+  let levelList = [];
+  const WORLDS = { 1: 'Cinder Caves', 2: 'Tide Halls', 3: 'Gale Spire', 4: 'Twin Core' };
+  function openPicker() {
+    if (!myRole || !levelList.length) return flashStatus(myRole ? 'Loading…' : 'Only players can change level');
+    const list = $('levellist');
+    list.innerHTML = '';
+    let grid = null, world = null;
+    levelList.forEach((l, i) => {
+      if (l.world !== world) {
+        world = l.world;
+        const h = document.createElement('div');
+        h.className = 'world';
+        h.textContent = WORLDS[world] ? `World ${world}: ${WORLDS[world]}` : `World ${world}`;
+        grid = document.createElement('div');
+        grid.className = 'lvls';
+        list.append(h, grid);
+      }
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'lvl' + (i === levelIndex ? ' current' : '');
+      b.innerHTML = `<b>${i + 1}</b>${escapeHtml(l.name)}`;
+      b.addEventListener('click', () => { socket.emit('goto', i); closePicker(); });
+      grid.append(b);
+    });
+    $('levelpicker').hidden = false;
+  }
+  function closePicker() { $('levelpicker').hidden = true; }
+  $('levelbtn').addEventListener('click', () => ($('levelpicker').hidden ? openPicker() : closePicker()));
+  $('pickerclose').addEventListener('click', closePicker);
   function setRoles(roles, active) {
     myRoles = roles;
     if (active !== myRole) { // start predicting the newly active character from scratch
@@ -239,6 +271,8 @@
     if (jumpKeys.has(e.code)) { e.preventDefault(); jumpQueued = true; }
     if (e.code === 'KeyR' && myRole) socket.emit('restart');
     if (e.code === 'Tab' || e.code === 'KeyQ') { e.preventDefault(); socket.emit('swap'); }
+    if (e.code === 'KeyL') $('levelpicker').hidden ? openPicker() : closePicker();
+    if (e.code === 'Escape') closePicker();
   });
   addEventListener('keyup', (e) => {
     const d = keyDir[e.code];
