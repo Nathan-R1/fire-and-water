@@ -395,3 +395,24 @@ test('stacked Springs never jump faster than one tile per tick', () => {
   P.pressJump(b); P.stepBody(L, b, {}, []);
   assert.ok(-b.vy * P.DT < P.TILE, `moved ${-b.vy * P.DT}px in one tick`);
 });
+
+test('Element Ward: stepping into your own element shields you, 1 s per copy, each time you step in', () => {
+  const r = run(31);
+  r.run.stage = 1; r.loadStage();
+  // a tiny level: fire walks from floor onto lava
+  const def = { id: 'ward', name: 'ward', rows: ['########', '#....fw#', '#F....W#', '###LL###', '########'] };
+  r.levelDef = def; r.level = P.parseLevel(def); r.state = P.createLevelState(r.level); r.enemySpecs = [];
+  for (const role of g.ROLES) r.players[role].body = P.createBody(r.level.spawns[role]);
+  C.grant(r, 'ward', 'fire'); C.grant(r, 'ward', 'fire');
+  C.onAttempt(r);
+  const f = r.players.fire.body;
+  tick(r, 5);
+  assert.equal(r.run.effects.fire.shieldT, 0, 'not in lava yet');
+  f.x = 3 * T + 2; // step onto the lava
+  tick(r, 2);
+  assert.ok(r.run.effects.fire.shieldT > 1.9, `2 copies → 2 s (${r.run.effects.fire.shieldT})`);
+  tick(r, 150);
+  assert.equal(r.run.effects.fire.shieldT, 0, 'only on stepping in, not while standing there');
+  f.x = 1 * T + 2; tick(r, 2); f.x = 3 * T + 2; tick(r, 2);
+  assert.ok(r.run.effects.fire.shieldT > 1.9, 'again when stepping back in');
+});

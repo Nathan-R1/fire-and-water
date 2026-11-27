@@ -221,6 +221,8 @@
     } else if (e.type === 'bonus') {
       const b = Bonuses.BY_ID[e.id];
       if (b) flashStatus(`+ ${b.name}${e.role ? ` (${e.role === 'fire' ? '🔥' : '💧'})` : ''}`);
+    } else if (e.type === 'ward') {
+      if (e.role === myRole) flashStatus(`🛡 Element Ward: ${e.seconds}s`);
     } else if (e.type === 'countdown') {
       navigator.vibrate?.(20);
     } else if (e.type === 'complete' && mode === 'challenge') {

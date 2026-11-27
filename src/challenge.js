@@ -47,6 +47,7 @@ function createRun(seed = (Math.random() * 2 ** 32) >>> 0) {
     nextUid: 1,
     equip: { fire: null, water: null }, // uid of the yellow item each player has equipped
     effects: { fire: { cloakT: 0, shieldT: 0 }, water: { cloakT: 0, shieldT: 0 } },
+    inElement: { fire: false, water: false }, // for Element Ward: were you in your element last tick?
     bullets: [],                     // Blaster shots
     used: new Set(),                 // campaign levels already played this run
     map: null,                       // the between-rooms screen (votes and picks)
@@ -155,6 +156,16 @@ function updateEnemies(room, dt) {
   }
   for (const it of allItems(run)) if (it.coolT > 0) it.coolT = Math.max(0, it.coolT - dt);
   const cloaked = (r) => run.effects[r].cloakT > 0;
+  // Element Ward: stepping into your own element shields you for 1 s per copy.
+  for (const r of ROLES) {
+    const inside = onOwnPool(room.level, room.players[r].body, r);
+    const wards = run.personal[r].filter((i) => i.id === 'ward').length;
+    if (inside && !run.inElement[r] && wards) {
+      run.effects[r].shieldT = Math.max(run.effects[r].shieldT, wards);
+      room.events.push({ type: 'ward', role: r, seconds: wards });
+    }
+    run.inElement[r] = inside;
+  }
   for (const e of run.enemies) {
     if (e.dead) continue;
     if (e.stunT > 0) { e.stunT -= dt; continue; }
@@ -235,6 +246,16 @@ function updateEnemies(room, dt) {
   return hits;
 }
 
+// Standing on a pool of your own element (lava for fire, water for water)?
+function onOwnPool(level, body, role) {
+  if (!body.onGround) return false;
+  const own = role === 'fire' ? P.T.LAVA : P.T.WATER;
+  const ty = Math.round((body.y + P.CHAR.height) / T);
+  const tx0 = Math.floor((body.x + 4) / T), tx1 = Math.floor((body.x + P.CHAR.width - 4) / T);
+  for (let tx = tx0; tx <= tx1; tx++) if (P.tileAt(level, tx, ty) === own) return true;
+  return false;
+}
+
 function liveRect(e) {
   return e.type === 'flyer' ? { x: e.x, y: e.yNow ?? e.y, w: e.w, h: e.h } : enemyRect(e);
 }
@@ -274,6 +295,7 @@ function onAttempt(room) {
   run.shieldUsed = false;
   run.invuln = { fire: 0, water: 0 };
   run.effects = { fire: { cloakT: 0, shieldT: 0 }, water: { cloakT: 0, shieldT: 0 } };
+  run.inElement = { fire: false, water: false };
   for (const it of allItems(run)) { if (!it.spent) it.ready = true; it.coolT = 0; } // once-per-room items recharge
   for (const r of ROLES) Object.assign(room.players[r].body, bodyMods(run, r));
   resetEnemies(room);
