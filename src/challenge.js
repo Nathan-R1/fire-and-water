@@ -14,6 +14,8 @@ const GUARDIAN_INVULN = 1;      // seconds of safety after Guardian sends you ba
 // in the air ~0.62 s, so you have about half a second in which to jump.
 const ACID = { period: 9, countdown: 3, burn: 0.1, firstAt: 4 };
 const GUN = { speed: 480, range: 5 * 24, size: 8 };
+const PATROL = { size: 20, speed: 45, minRun: 3 };          // walkers pacing along platforms
+const BOMBER = { w: 30, h: 18, speed: 80, cooldown: 1.2, gravity: 900, size: 10 };
 const SHOOTER = { period: 1.6, speed: 200, size: 10 };
 const BOSS_DEFS = { boss1: require('../levels/boss-1.json'), boss2: require('../levels/boss-2.json') };
 const T = P.TILE;
@@ -115,6 +117,17 @@ function enemySpecs(run, kind, level) {
   if (run.stage === 0) return [];
   const count = run.stage < 4 ? 1 + Math.floor(run.rand() * 2) : 2 + Math.floor(run.rand() * 2);
   const spots = sentrySpots(level);
+  // Room 2 has sentries; from room 3 on, either sentries or patrolling walkers (never both).
+  const patrols = run.stage >= 2 && run.rand() < 0.5 ? patrolSpecs(run, spots, count) : [];
+  const specs = patrols.length ? patrols : sentrySpecs(run, spots, count);
+  // Rooms 6–9: a bomber flies along the top and drops bombs on whoever it passes over.
+  if (run.stage >= 5) {
+    specs.push({ type: 'bomber', x0: 1 * T, x1: level.pxWidth - T - BOMBER.w, y: 1.1 * T, w: BOMBER.w, h: BOMBER.h, speed: BOMBER.speed, x: run.rand() < 0.5 ? 1 * T : level.pxWidth - T - BOMBER.w });
+  }
+  return specs;
+}
+
+function sentrySpecs(run, spots, count) {
   const chosen = [];
   for (const s of pickN(run.rand, spots, spots.length)) {
     if (chosen.length >= count) break;
@@ -122,6 +135,23 @@ function enemySpecs(run, kind, level) {
     chosen.push(s);
   }
   return chosen.map((s) => ({ type: 'sentry', x: s.tx * T + 3, y: (s.ty + 1) * T - 18, w: 18, h: 18 }));
+}
+
+// Walkers pace along runs of safe floor (the same safe cells sentries use), at least
+// PATROL.minRun tiles long, one walker per run.
+function patrolSpecs(run, spots, count) {
+  const key = new Set(spots.map((s) => `${s.tx},${s.ty}`));
+  const runs = [];
+  for (const s of spots) {
+    if (key.has(`${s.tx - 1},${s.ty}`)) continue; // not the start of a run
+    let end = s.tx;
+    while (key.has(`${end + 1},${s.ty}`)) end++;
+    if (end - s.tx + 1 >= PATROL.minRun) runs.push({ ty: s.ty, tx0: s.tx, tx1: end });
+  }
+  return pickN(run.rand, runs, count).map((r) => {
+    const x0 = r.tx0 * T, x1 = (r.tx1 + 1) * T - PATROL.size;
+    return { type: 'patrol', x0, x1, x: x0 + run.rand() * (x1 - x0), y: (r.ty + 1) * T - PATROL.size, w: PATROL.size, h: PATROL.size, speed: PATROL.speed };
+  });
 }
 
 // ── Enemies ──
@@ -177,6 +207,22 @@ function updateEnemies(room, dt) {
       e.size = e.size0 + (e.size1 - e.size0) * Math.min(1, run.time / e.grow);
       e.x += e.dir * e.speed * dt;
       if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x + e.size > e.x1) { e.x = e.x1 - e.size; e.dir = -1; }
+    } else if (e.type === 'patrol') {
+      e.x += e.dir * e.speed * dt;
+      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
+    } else if (e.type === 'bomber') {
+      e.x += e.dir * e.speed * dt;
+      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
+      e.cool = Math.max(0, (e.cool ?? 0) - dt);
+      const cx = e.x + e.w / 2;
+      const below = ROLES.filter((r) => !cloaked(r)).some((r) => {
+        const b = room.players[r].body;
+        return Math.abs(b.x + P.CHAR.width / 2 - cx) < 12 && b.y > e.y;
+      });
+      if (below && e.cool === 0) {
+        e.cool = BOMBER.cooldown;
+        run.shots.push({ x: cx - BOMBER.size / 2, y: e.y + e.h, vx: 0, vy: 40, g: BOMBER.gravity, kind: 'bomb' });
+      }
     } else if (e.type === 'shooter') {
       e.cool = (e.cool ?? SHOOTER.period) - dt;
       if (e.cool <= 0) {
@@ -196,6 +242,7 @@ function updateEnemies(room, dt) {
   // Enemy shots fly straight and stop at rock.
   const inRock = (x, y) => P.tileAt(room.level, Math.floor(x / T), Math.floor(y / T)) === P.T.SOLID;
   run.shots = run.shots.filter((sh) => {
+    if (sh.g) sh.vy += sh.g * dt; // bombs fall
     sh.x += sh.vx * dt; sh.y += sh.vy * dt;
     return !inRock(sh.x + SHOOTER.size / 2, sh.y + SHOOTER.size / 2) && sh.x > -50 && sh.x < room.level.pxWidth + 50 && sh.y < room.level.pxHeight + 50;
   });
@@ -206,7 +253,7 @@ function updateEnemies(room, dt) {
     const br = { x: b.x, y: b.y, w: GUN.size, h: GUN.size };
     for (const e of run.enemies) {
       if (e.dead || !overlaps(br, liveRect(e))) continue;
-      if (e.type === 'sentry') e.dead = true; else e.stunT = Math.max(e.stunT, 1.5);
+      if (e.type === 'sentry' || e.type === 'patrol') e.dead = true; else e.stunT = Math.max(e.stunT, 1.5);
       return false;
     }
     return true;
@@ -241,7 +288,7 @@ function updateEnemies(room, dt) {
         if (overlaps(cr, shrink(liveRect(e), 2))) { hits.push({ role: r, cause: e.type }); break; }
       }
     }
-    for (const sh of run.shots) if (overlaps(cr, { x: sh.x, y: sh.y, w: SHOOTER.size, h: SHOOTER.size })) { hits.push({ role: r, cause: 'shot' }); break; }
+    for (const sh of run.shots) if (overlaps(cr, { x: sh.x, y: sh.y, w: SHOOTER.size, h: SHOOTER.size })) { hits.push({ role: r, cause: sh.kind === 'bomb' ? 'bomb' : 'shot' }); break; }
   }
   return hits;
 }
@@ -514,7 +561,7 @@ function use(room, role) {
   switch (it.id) {
     case 'blast':
       for (const e of run.enemies) {
-        if (e.type === 'sentry' && near(liveRect(e), 80)) e.dead = true;
+        if ((e.type === 'sentry' || e.type === 'patrol') && near(liveRect(e), 80)) e.dead = true;
         else if (near(liveRect(e), 140)) e.stunT = 2.5;
       }
       run.shots = run.shots.filter((sh) => !near({ x: sh.x, y: sh.y, w: 10, h: 10 }, 110));
@@ -599,7 +646,7 @@ function view(room) {
       const r = liveRect(e);
       return { type: e.type, x: r.x, y: r.y, w: r.w, h: r.h, stun: e.stunT > 0 };
     }),
-    shots: run.shots.map((sh) => ({ x: sh.x, y: sh.y })),
+    shots: run.shots.map((sh) => ({ x: sh.x, y: sh.y, kind: sh.kind })),
     bullets: run.bullets.map((b) => ({ x: b.x, y: b.y })),
     acid: run.acid && { countdown: Math.max(0, run.acid.countdown), burning: run.acid.burning > 0 },
   };

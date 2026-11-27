@@ -438,3 +438,59 @@ test('each attempt waits: enemies and the clock start when someone moves', () =>
   g.restart(r);
   assert.equal(r.run.started, false, 'and it waits again after a restart');
 });
+
+test('enemy mix: room 2 sentries; rooms 3+ sentries or patrolling walkers, never both; rooms 6–9 add a bomber', () => {
+  const kinds = { 1: new Set(), 2: new Set(), 6: new Set() };
+  for (let seed = 1; seed <= 40; seed++) {
+    for (const stage of [1, 2, 6]) {
+      const r = run(seed);
+      r.run.stage = stage; r.loadStage();
+      const types = new Set(r.run.enemies.map((e) => e.type));
+      assert.ok(!(types.has('sentry') && types.has('patrol')), `stage ${stage}: both kinds`);
+      assert.equal(types.has('bomber'), stage >= 5, `stage ${stage}: bomber`);
+      for (const t of types) kinds[stage].add(t);
+      for (const e of r.run.enemies.filter((x) => x.type === 'patrol')) {
+        assert.ok(e.x1 - e.x0 >= 2 * T - P.TILE * 0.2, 'a patrol route at least ~3 tiles long');
+      }
+    }
+  }
+  assert.deepEqual([...kinds[1]].sort(), ['sentry']);
+  assert.ok(kinds[2].has('sentry') && kinds[2].has('patrol'), [...kinds[2]].join(','));
+  assert.ok(kinds[6].has('bomber'));
+});
+
+test('patrolling walkers pace between the ends of their route', () => {
+  const r = run(41);
+  r.run.stage = 2;
+  let walker;
+  for (let k = 0; k < 30 && !walker; k++) { r.loadStage(); walker = r.run.enemies.find((e) => e.type === 'patrol'); }
+  assert.ok(walker, 'got a room with walkers');
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  let minX = Infinity, maxX = -Infinity;
+  tick(r, 60 * 20);
+  for (let i = 0; i < 60 * 20; i++) { tick(r); minX = Math.min(minX, walker.x); maxX = Math.max(maxX, walker.x); }
+  assert.ok(minX >= walker.x0 - 1e-6 && maxX <= walker.x1 + 1e-6, 'stays on its route');
+  assert.ok(maxX - minX > (walker.x1 - walker.x0) * 0.9, 'covers the route both ways');
+});
+
+test('the bomber drops a bomb when it passes over a player (not a cloaked one); bombs fall and kill', () => {
+  const r = run(42);
+  r.run.stage = 6; r.loadStage();
+  const bomber = r.run.enemies.find((e) => e.type === 'bomber');
+  r.run.enemies = [bomber];
+  const f = r.players.fire.body;
+  // park the bomber right above fire
+  bomber.x = f.x + P.CHAR.width / 2 - bomber.w / 2; bomber.cool = 0; bomber.speed = 0;
+  C.grant(r, 'cloak', 'fire');
+  C.use(r, 'fire');
+  tick(r, 5);
+  assert.equal(r.run.shots.length, 0, 'no bomb on a cloaked player');
+  r.run.effects.fire.cloakT = 0;
+  r.players.water.body.x = 1e5;
+  tick(r, 1);
+  assert.equal(r.run.shots.length, 1, 'bomb away');
+  assert.equal(r.run.shots[0].kind, 'bomb');
+  const y0 = r.run.shots[0].y;
+  tick(r, 10);
+  assert.ok(!r.run.shots.length || r.run.shots[0].y > y0 + 10, 'falling');
+});

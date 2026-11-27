@@ -230,7 +230,7 @@
     if (s.run) renderRun(s.run, s.phase);
   });
 
-  const CAUSE = { [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
+  const CAUSE = { patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
   socket.on('event', (e) => {
     if (e.type === 'level') {
       setLevel(e);
@@ -932,6 +932,23 @@
         ctx.fillStyle = '#fff';
         const s = Math.max(3, e.w / 8);
         ctx.fillRect(e.x + e.w * 0.25, e.y + e.h * 0.3, s, s); ctx.fillRect(e.x + e.w * 0.65, e.y + e.h * 0.3, s, s);
+      } else if (e.type === 'patrol') {
+        const step = Math.sin(now / 90) * 2;
+        ctx.fillStyle = '#9b4fd0';
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(e.x, e.y, e.w, e.h - 3, 6) : ctx.rect(e.x, e.y, e.w, e.h - 3);
+        ctx.fill();
+        ctx.fillRect(e.x + 3, e.y + e.h - 4 + step, 5, 4); ctx.fillRect(e.x + e.w - 8, e.y + e.h - 4 - step, 5, 4);
+        ctx.fillStyle = '#fff'; ctx.fillRect(e.x + 5, e.y + 5, 3, 3); ctx.fillRect(e.x + e.w - 8, e.y + 5, 3, 3);
+      } else if (e.type === 'bomber') {
+        ctx.fillStyle = '#4b4566';
+        ctx.beginPath();
+        ctx.ellipse(e.x + e.w / 2, e.y + e.h / 2, e.w / 2, e.h / 2.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#8a86a8';
+        const prop = Math.abs(Math.sin(now / 40)) * 10;
+        ctx.fillRect(e.x + e.w / 2 - prop / 2, e.y - 2, prop, 2);
+        ctx.fillStyle = '#ffb02e'; ctx.fillRect(e.x + e.w / 2 - 3, e.y + e.h - 4, 6, 4);
       } else if (e.type === 'shooter') {
         ctx.fillStyle = '#8a86a8'; ctx.fillRect(e.x, e.y, e.w, e.h);
         ctx.fillStyle = '#ff6a2b'; ctx.fillRect(e.x + e.w / 2 - 4, e.y + e.h - 4, 8, 8);
@@ -939,7 +956,11 @@
       ctx.globalAlpha = 1;
     }
     ctx.fillStyle = '#ffb02e';
-    for (const s of r.shots) { ctx.beginPath(); ctx.arc(s.x + 5, s.y + 5, 5, 0, Math.PI * 2); ctx.fill(); }
+    for (const s of r.shots) {
+      ctx.fillStyle = s.kind === 'bomb' ? '#2a2640' : '#ffb02e';
+      ctx.beginPath(); ctx.arc(s.x + 5, s.y + 5, 5, 0, Math.PI * 2); ctx.fill();
+      if (s.kind === 'bomb') { ctx.fillStyle = '#ff6a2b'; ctx.fillRect(s.x + 4, s.y - 2, 2, 3); }
+    }
     ctx.fillStyle = '#7ff3ff';
     for (const b of r.bullets || []) ctx.fillRect(b.x, b.y, 8, 4);
     if (r.acid) {
