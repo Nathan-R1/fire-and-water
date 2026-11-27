@@ -121,6 +121,7 @@ io.on('connection', (socket) => {
       Object.assign(s.players[r].body, { x: e.tx * 24 + 2, y: (e.ty + 1) * 24 - 30, vx: 0, vy: 0, onGround: true });
     }
     s.exitTicks = game.TICKS.exitHold;
+    s.skipPause = true; // and no end-of-room pause before the drops
     if (s.run) { s.run.enemies = []; s.run.shots = []; s.run.acid = null; }
   });
 

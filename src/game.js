@@ -193,7 +193,8 @@ function step(room) {
     return;
   }
   if (room.phase === 'complete') {
-    if (++room.phaseTicks >= TICKS.completePause) {
+    if (room.skipPause || ++room.phaseTicks >= TICKS.completePause) { // skipPause: the dev Skip room button
+      room.skipPause = false;
       if (room.mode === 'challenge') C.onComplete(room);
       else loadLevel(room, (room.levelIndex + 1) % room.levels.length);
     }

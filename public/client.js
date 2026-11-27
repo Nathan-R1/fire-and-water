@@ -275,10 +275,12 @@
     $('status').textContent = `${myRole === 'fire' ? '🔥 Fire' : '💧 Water'}${both ? ' · solo (both)' : waiting ? ' · waiting for partner' : ''}`;
   }
 
+  let flashTimer = null;
   function flashStatus(text) {
     statusOverride = text;
     $('status').textContent = text;
-    setTimeout(() => { statusOverride = null; updateStatus(); }, 1500);
+    clearTimeout(flashTimer); // a newer message gets its full time
+    flashTimer = setTimeout(() => { statusOverride = null; updateStatus(); }, 1500);
   }
 
   let bannerTimer = null;
@@ -786,9 +788,10 @@
     const btn = $('use');
     const it = equippedItem();
     btn.hidden = mode !== 'challenge' || !myRole;
-    btn.innerHTML = it ? Bonuses.BY_ID[it.id].icon : '✦';
+    const many = activeChoices().length > 1;
+    btn.innerHTML = (it ? Bonuses.BY_ID[it.id].icon : '✦') + (many ? '<span class="cyc l">‹</span><span class="cyc r">›</span>' : '');
     btn.classList.toggle('spent', !it || !it.ready || it.cool);
-    btn.title = it ? Bonuses.BY_ID[it.id].name : 'No item equipped: tap an item in the bar';
+    btn.title = (it ? Bonuses.BY_ID[it.id].name : 'No item equipped: tap an item in the bar') + (many ? ' · swipe to switch' : '');
   }
   function useItem() {
     const it = equippedItem();
@@ -799,7 +802,48 @@
     socket.emit('use', { r: myRole });
     navigator.vibrate?.(15);
   }
-  $('use').addEventListener('pointerdown', (e) => { e.preventDefault(); useItem(); });
+  // The active items this player can switch between, in bar order (team, then their own).
+  // A team item your partner has equipped is skipped, so swiping never takes it from them.
+  function activeChoices() {
+    if (!run || !myRole) return [];
+    const other = myRole === 'fire' ? 'water' : 'fire';
+    const yellow = (it) => Bonuses.BY_ID[it.id].color === 'yellow' && !it.spent;
+    return run.items.filter((it) => yellow(it) && run.equip[other] !== it.uid).concat(run.personal[myRole].filter(yellow));
+  }
+  function cycleItem(step) {
+    const list = activeChoices();
+    if (!list.length) return flashStatus('No active items');
+    const cur = list.findIndex((it) => it.uid === run.equip[myRole]);
+    const next = list[cur < 0 ? (step > 0 ? 0 : list.length - 1) : (cur + step + list.length) % list.length];
+    if (next.uid === run.equip[myRole]) return flashStatus(`${Bonuses.BY_ID[next.id].name} is your only active`);
+    socket.emit('equip', { r: myRole, uid: next.uid });
+    flashStatus(`✦ ${Bonuses.BY_ID[next.id].name}`);
+    navigator.vibrate?.(8);
+  }
+  // ✦ button: tap to use; swipe left/right on it to switch to the previous/next active.
+  const SWIPE = 28; // px
+  let useStart = null;
+  $('use').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    $('use').setPointerCapture?.(e.pointerId);
+    useStart = { x: e.clientX, id: e.pointerId, swiped: false };
+  });
+  $('use').addEventListener('pointermove', (e) => {
+    if (!useStart || e.pointerId !== useStart.id || useStart.swiped) return;
+    const dx = e.clientX - useStart.x;
+    if (Math.abs(dx) >= SWIPE) { useStart.swiped = true; cycleItem(dx > 0 ? 1 : -1); }
+  });
+  $('use').addEventListener('pointerup', (e) => {
+    if (!useStart || e.pointerId !== useStart.id) return;
+    if (!useStart.swiped) useItem();
+    useStart = null;
+  });
+  $('use').addEventListener('pointercancel', () => { useStart = null; });
+  addEventListener('keydown', (e) => {
+    if (mode !== 'challenge' || e.repeat) return;
+    if (e.code === 'KeyZ') cycleItem(-1);
+    if (e.code === 'KeyC') cycleItem(1);
+  });
   addEventListener('keydown', (e) => { if ((e.code === 'KeyE' || e.code === 'ShiftLeft') && !e.repeat && mode === 'challenge') useItem(); });
 
   // The map between rooms: team vote (rock paper scissors on a tie), then personal picks.

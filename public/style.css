@@ -279,6 +279,10 @@ body.on-menu { touch-action: auto; }
 #use[hidden] { display: none; }
 #use.spent { opacity: 0.35; }
 #use svg { width: 28px; height: 28px; }
+#use { position: relative; touch-action: none; }
+#use .cyc { position: absolute; top: 50%; transform: translateY(-50%); font-size: 14px; opacity: 0.6; }
+#use .cyc.l { left: 4px; }
+#use .cyc.r { right: 4px; }
 
 /* map between rooms, and the end of a run */
 #mapview, #over {
