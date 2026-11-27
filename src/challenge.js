@@ -115,6 +115,58 @@ function sentrySpots(level) {
   return spots;
 }
 
+// Element Ward and Solidify need a pool of your own element, so a Challenge room with no
+// lava or no water gets a 1-tile pool of the missing kind in a dead-end corner beside
+// the spawns or the exits, where nobody has to walk (never right beside the other
+// player's spawn or exit). Done before enemies are placed, so none sit on it.
+function withPools(def) {
+  const level = P.parseLevel(def);
+  const has = (type) => level.tiles.some((t) => t === type);
+  const rows = def.rows.slice();
+  const set = (tx, ty, str) => { rows[ty] = rows[ty].slice(0, tx) + str + rows[ty].slice(tx + str.length); };
+  let changed = false;
+  for (const [el, type, ch] of [['fire', P.T.LAVA, 'L'], ['water', P.T.WATER, '~']]) {
+    if (has(type)) continue;
+    const corner = poolCorners(P.parseLevel({ ...def, rows }), el)[0];
+    if (corner) { set(corner.tx, corner.ty + 1, ch); changed = true; }
+    // No dead end anywhere: leave it out rather than put a pool on someone's route.
+  }
+  return changed ? { ...def, rows } : def;
+}
+
+// Dead-end floor beside the spawns or the exits: the tiles between the outermost of a
+// pair and the wall, where nobody has to walk. Own spawn's side first, then the exits.
+function poolCorners(level, el) {
+  const solid = (x, y) => P.tileAt(level, x, y) === P.T.SOLID;
+  const empty = (x, y) => P.tileAt(level, x, y) === P.T.EMPTY;
+  const ground = (x, y) => [P.T.SOLID, P.T.LAVA, P.T.WATER, P.T.ACID].includes(P.tileAt(level, x, y));
+  const floor = (x, y) => empty(x, y) && ground(x, y + 1); // can walk here (pools count)
+  const wall = (x, y) => solid(x, y) && solid(x, y - 1);
+  const sp = (s) => ({ tx: Math.floor((s.x + 10) / T), ty: Math.floor((s.y + 29) / T) });
+  const other = el === 'fire' ? 'water' : 'fire';
+  const things = [...ROLES.map((r) => sp(level.spawns[r])), ...ROLES.map((r) => level.exits[r]),
+    ...level.plates, ...level.levers, ...level.boxes];
+  const out = [];
+  for (const g of [[sp(level.spawns[el]), sp(level.spawns[other])], [level.exits[el], level.exits[other]]]) {
+    for (const a of g) {
+      for (const dir of [-1, 1]) {
+        const tiles = [];
+        let x = a.tx + dir;
+        for (; Math.abs(x - a.tx) <= 8 && floor(x, a.ty); x += dir) tiles.push(x);
+        if (!wall(x, a.ty) || !tiles.length) continue; // not a dead end
+        const beyond = (t) => g.some((m) => m.ty === a.ty && Math.sign(m.tx - t) === dir);
+        // not right next to where the other player spawns or finishes: one wrong tap
+        const theirs = [sp(level.spawns[other]), level.exits[other]];
+        const besideTheirs = (t) => theirs.some((m) => m.ty === a.ty && Math.abs(m.tx - t) <= 1);
+        for (const t of tiles.reverse()) { // nearest the wall first
+          if (solid(t, a.ty + 1) && !beyond(t) && !besideTheirs(t) && !things.some((o) => o.tx === t && o.ty === a.ty)) out.push({ tx: t, ty: a.ty });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function enemySpecs(run, kind, level, def = {}) {
   if (kind === 'boss1') {
     // each arena says where the twins fly and walk (tiles); defaults: the original arena
@@ -633,6 +685,7 @@ function loadStage(room, load) {
     def = arenas[Math.floor(run.rand() * arenas.length)];
     label = `Boss ${kind === 'boss1' ? 1 : 2}`;
   }
+  if (run.stage > 0) def = withPools(def); // room 1 stays an exact copy
   room.enemySpecs = [];
   load(def, { index: run.stage, total: STAGES.length, label });
   room.enemySpecs = enemySpecs(run, kind, room.level, def);
@@ -965,6 +1018,6 @@ function view(room) {
 }
 
 module.exports = {
-  STAGES, HEARTS, ACID, createRun, start, loadStage, onAttempt, onComplete, updateEnemies, absorb,
+  STAGES, HEARTS, ACID, withPools, createRun, start, loadStage, onAttempt, onComplete, updateEnemies, absorb,
   act, equip, use, view, grant, sentrySpots, enemySpecs, rng, offer,
 };

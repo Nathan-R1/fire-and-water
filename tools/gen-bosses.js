@@ -46,7 +46,7 @@ level('boss-1c', 'boss-1c', 'The Twins: Half Walls', 9, (L) => {
   L.plat(2, 5, 18); L.plat(7, 10, 15); L.plat(2, 5, 12); L.plat(8, 11, 10); // up onto the roof
   L.plat(16, 19, 7); L.lever(17, 6, 1);                      // the high levers
   L.plat(29, 32, 7); L.lever(30, 6, 2);
-  L.pool(22, 23, 10, 'L');
+  L.pool(22, 23, 10, 'L'); L.pool(34, 35, 10, '~');           // one of each element on the roof
   L.put(19, 18, 'r'); L.put(21, 18, 'b'); L.put(18, 4, 'r'); L.put(31, 4, 'b'); L.put(9, 8, 'r'); L.put(23, 7, 'b');
   L.put(37, 20, 'f'); L.put(35, 20, 'w');
 });

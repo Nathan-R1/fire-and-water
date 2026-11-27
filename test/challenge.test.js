@@ -886,3 +886,34 @@ test('Solidify: harden your own pool so your teammate can walk on it', () => {
   assert.equal(r.phase, 'playing', 'water stands on hardened lava');
   assert.equal(C.use(r, 'fire'), false, 'once per room');
 });
+
+test('pools: Challenge rooms get lava and water in dead-end corners; room 1 stays untouched', () => {
+  const { analyse } = require('../tools/levelcheck');
+  const has = (def, t) => P.parseLevel(def).tiles.some((x) => x === t);
+  const bosses = ['boss-1', 'boss-1b', 'boss-1c', 'boss-2'].map((f) => require(`../levels/${f}.json`));
+  for (const def of [...g.LEVELS.slice(0, 48), ...bosses]) {
+    const out = C.withPools(def);
+    // Mill Finale has no dead-end floor for a water pool, so it only gets lava
+    if (def.id === '48-mill-finale') assert.ok(has(out, P.T.LAVA) && !has(out, P.T.WATER));
+    else assert.ok(has(out, P.T.LAVA) && has(out, P.T.WATER), `${def.id}: both pools`);
+    if (has(def, P.T.LAVA) && has(def, P.T.WATER)) { assert.equal(out, def, `${def.id}: left alone`); continue; }
+    assert.deepEqual(analyse(out).errors, [], `${def.id}: still solvable`);
+    // the new pool is never right beside where the other player starts or finishes
+    const l = P.parseLevel(out);
+    out.rows.forEach((row, y) => [...row].forEach((ch, x) => {
+      if (ch === def.rows[y][x]) return;
+      const other = ch === 'L' ? 'water' : 'fire';
+      const s = l.spawns[other], e = l.exits[other];
+      const sx = Math.floor((s.x + 10) / T), sy = Math.floor((s.y + 29) / T);
+      assert.ok(!(sy === y - 1 && Math.abs(sx - x) <= 1), `${def.id}: pool beside ${other}'s spawn`);
+      assert.ok(!(e.ty === y - 1 && Math.abs(e.tx - x) <= 1), `${def.id}: pool beside ${other}'s exit`);
+    }));
+  }
+  // in a run: room 1 is the campaign level as is; later rooms get the pools
+  for (let seed = 1; seed <= 30; seed++) {
+    const r = run(seed);
+    assert.equal(r.levelDef, g.LEVELS.find((d) => d.id === r.levelDef.id), 'room 1 untouched');
+    r.run.stage = 1; r.loadStage();
+    assert.ok(has(r.levelDef, P.T.LAVA) && has(r.levelDef, P.T.WATER), `room 2 (${r.levelDef.id}) has both`);
+  }
+});
