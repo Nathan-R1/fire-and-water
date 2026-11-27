@@ -161,6 +161,7 @@
       boxes: level.boxes.map(newBox),
       pulleys: level.pulleys.map(() => ({ o: 0 })),
       geysers: [], // temporary updrafts (Challenge mode): { x, y, w, h, t }
+      blocks: [],  // extra solid rects that don't move (Challenge mode mimics): { x, y, w, h }
     };
   }
 
@@ -174,6 +175,7 @@
       boxes: (s.boxes || []).map((b) => ({ x: b.x, y: b.y, w: BOX.size, h: BOX.size, vy: b.vy || 0, onGround: !!b.onGround })),
       pulleys: (s.pulleys || []).map((p) => ({ o: typeof p === 'number' ? p : p.o })),
       geysers: (s.geysers || []).map((g) => ({ ...g })),
+      blocks: (s.blocks || []).map((b) => ({ ...b })),
     };
   }
 
@@ -226,6 +228,7 @@
     if (state) {
       level.gates.forEach((g, i) => { if (!state.gates[i] && overlaps(r, g.rect)) out.push(g.rect); });
       for (const p of platformRects(level, state)) if (overlaps(r, p)) out.push(p);
+      if (state.blocks) for (const b of state.blocks) if (overlaps(r, b)) out.push(b);
     }
     for (const b of bodies) {
       const br = rectOf(b);

@@ -494,3 +494,123 @@ test('the bomber drops a bomb when it passes over a player (not a cloaked one); 
   tick(r, 10);
   assert.ok(!r.run.shots.length || r.run.shots[0].y > y0 + 10, 'falling');
 });
+
+// A small test arena for enemy behaviour.
+function arena(r, rows) {
+  const def = { id: 'arena', name: 'arena', rows };
+  r.levelDef = def; r.level = P.parseLevel(def); r.state = P.createLevelState(r.level);
+  for (const role of g.ROLES) r.players[role].body = P.createBody(r.level.spawns[role]);
+}
+
+test('rooms 6–9: one ground enemy type (sentry, walker, burrower, mimic or charger) plus the bomber', () => {
+  const seen = new Set();
+  for (let seed = 1; seed <= 60; seed++) {
+    const r = run(seed);
+    r.run.stage = 5 + (seed % 4); r.loadStage();
+    const ground = new Set(r.run.enemies.map((e) => e.type).filter((t) => t !== 'bomber'));
+    assert.ok(ground.size <= 1, [...ground].join(','));
+    for (const t of ground) seen.add(t);
+  }
+  for (const t of ['sentry', 'patrol', 'burrower', 'mimic', 'charger']) assert.ok(seen.has(t), `never saw ${t}: ${[...seen]}`);
+  // rooms 3–4 never get the new ones
+  for (let seed = 1; seed <= 30; seed++) {
+    const r = run(seed); r.run.stage = 2; r.loadStage();
+    for (const e of r.run.enemies) assert.ok(['sentry', 'patrol'].includes(e.type), e.type);
+  }
+});
+
+test('burrower: hides, cracks the ground under a player for 2 s, bursts out (deadly nearby), hides again', () => {
+  const r = run(50);
+  arena(r, ['##############', '#............#', '#............#', '#F.........Wfw', '##############'].map((x) => x.padEnd(14, '#').slice(0, 14)));
+  r.enemySpecs = [{ type: 'burrower', w: 30, h: 26 }];
+  C.onAttempt(r);
+  const e = r.run.enemies[0];
+  r.run.invuln.water = 1e9; // keep water out of it
+  tick(r, 60 * 3 + 2);
+  assert.equal(e.phase, 'warning', 'surfacing under fire');
+  assert.ok(Math.abs(e.x + e.w / 2 - (r.players.fire.body.x + 10)) < 2);
+  tick(r, 60 * 2 + 2);
+  assert.equal(r.phase, 'dead', 'fire stood still in the burst');
+  // and if you move away in time, you're fine
+  tick(r, g.TICKS.deathPause);
+  C.onAttempt(r);
+  const e2 = r.run.enemies[0];
+  r.run.invuln.water = 1e9;
+  tick(r, 60 * 3 + 2);
+  assert.equal(e2.phase, 'warning');
+  r.players.fire.body.x += 4 * T;
+  tick(r, 60 * 2 + 40);
+  assert.equal(r.phase, 'playing', 'moved away: survived');
+  assert.equal(e2.phase, 'hidden', 'gone back under');
+});
+
+test('mimic: a solid "box" you can stand on, but walking into its side gets you stabbed; Blast destroys it', () => {
+  const r = run(51);
+  arena(r, ['###########', '#.........#', '#.........#', '#F......Wfw', '###########']);
+  r.enemySpecs = [{ type: 'mimic', x: 4 * T, y: 3 * T, w: T, h: T }];
+  C.onAttempt(r);
+  assert.equal(r.state.blocks.length, 1, 'solid');
+  const f = r.players.fire.body;
+  // stand on top: fine
+  f.x = 4 * T + 2; f.y = 3 * T - P.CHAR.height - 1;
+  tick(r, 30);
+  assert.equal(r.phase, 'playing');
+  assert.ok(Math.abs(f.y + P.CHAR.height - 3 * T) < 1, 'standing on it');
+  // walk into its side: stabbed
+  f.x = 2 * T; f.y = 4 * T - P.CHAR.height;
+  for (let i = 0; i < 60 && r.phase === 'playing'; i++) { seq++; g.queueInput(r, 'fire', { s: seq, d: 1, j: false }); g.queueInput(r, 'water', { s: seq, d: 0, j: false }); r.run.started = true; g.step(r); }
+  assert.equal(r.phase, 'dead');
+  // Blast destroys it and its solidity
+  tick(r, g.TICKS.deathPause);
+  C.grant(r, 'blast', 'fire');
+  f.x = 3 * T;
+  C.use(r, 'fire');
+  assert.equal(r.state.blocks.length, 0);
+});
+
+test('charger: charges a player who comes level and near, tires at the wall, walks back home', () => {
+  const r = run(52);
+  arena(r, ['####################', '#..................#', '#..................#', '#F................W#', '#................fw#', '####################'].map((x, i) => (i === 3 ? '#F................W#' : x)));
+  // fire spawns on the floor (row 4); move the spawn markers by hand
+  r.players.fire.body.x = 2 * T; r.players.fire.body.y = 5 * T - P.CHAR.height;
+  r.players.water.body.x = 18 * T; r.players.water.body.y = 5 * T - P.CHAR.height;
+  r.enemySpecs = [{ type: 'charger', x: 10 * T, y: 5 * T - 22, w: 22, h: 22 }];
+  const [fx, fy, wx, wy] = [r.players.fire.body.x, r.players.fire.body.y, r.players.water.body.x, r.players.water.body.y];
+  C.onAttempt(r);
+  Object.assign(r.players.fire.body, { x: fx, y: fy }); Object.assign(r.players.water.body, { x: wx, y: wy });
+  const e = r.run.enemies[0];
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  tick(r, 30);
+  assert.equal(e.mode, 'ready', 'nobody within 6 tiles');
+  r.players.fire.body.x = 6 * T;
+  tick(r, 2);
+  assert.equal(e.mode, 'charging');
+  tick(r, 120);
+  assert.equal(e.mode, 'tired', 'hit the wall');
+  assert.ok(e.x < 3 * T, `charged left to the wall (${(e.x / T).toFixed(1)})`);
+  r.players.fire.body.x = 1 * T; // well away from its home (and not on the exits)
+  tick(r, 60 * 5 + 5);
+  assert.equal(e.mode, 'returning');
+  tick(r, 60 * 30);
+  assert.equal(e.mode, 'ready');
+  assert.ok(Math.abs(e.x - 10 * T) < 3, 'back home');
+});
+
+test("charger: if it can't get back up to its platform it waits as close as it got", () => {
+  const r = run(53);
+  arena(r, ['####################', '#..................#', '#.....######.......#', '#..................#', '#F...............Wfw', '####################'].map((x) => x.slice(0, 20).padEnd(20, '#')));
+  r.enemySpecs = [{ type: 'charger', x: 8 * T, y: 2 * T - 22, w: 22, h: 22 }];
+  C.onAttempt(r);
+  const e = r.run.enemies[0];
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  Object.assign(r.players.fire.body, { x: 13 * T, y: 2 * T - P.CHAR.height }); // level with it, to its right
+  r.players.water.body.x = 18 * T;
+  tick(r, 2);
+  assert.equal(e.mode, 'charging');
+  r.players.fire.body.x = 1 * T; r.players.fire.body.y = 5 * T - P.CHAR.height; // get out of the way
+  tick(r, 200);
+  assert.ok(e.y > 3 * T, 'ran off the platform and fell');
+  tick(r, 60 * 5 + 60 * 15);
+  assert.equal(e.mode, 'ready', 'gave up returning');
+  assert.ok(e.y > 3 * T, 'waiting down below, as close as it could get');
+});

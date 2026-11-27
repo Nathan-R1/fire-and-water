@@ -16,6 +16,10 @@ const ACID = { period: 9, countdown: 3, burn: 0.1, firstAt: 4 };
 const GUN = { speed: 480, range: 5 * 24, size: 8 };
 const PATROL = { size: 20, speed: 45, minRun: 3 };          // walkers pacing along platforms
 const BOMBER = { w: 30, h: 18, speed: 80, cooldown: 1.2, gravity: 900, size: 10 };
+// Rooms 6–9 only:
+const BURROW = { hideMin: 5, hideMax: 10, warn: 2, out: 0.6, radius: 1.5 * 24 };  // hides, cracks, bursts
+const MIMIC = { shakeEvery: 5, shake: 0.6 };                                       // a box that stabs
+const CHARGER = { size: 22, sight: 6 * 24, height: 1.5 * 24, charge: 1.6, back: 0.35, maxRun: 10 * 24, tired: 5, minRun: 5 };
 const SHOOTER = { period: 1.6, speed: 200, size: 10 };
 const BOSS_DEFS = { boss1: require('../levels/boss-1.json'), boss2: require('../levels/boss-2.json') };
 const T = P.TILE;
@@ -117,9 +121,16 @@ function enemySpecs(run, kind, level) {
   if (run.stage === 0) return [];
   const count = run.stage < 4 ? 1 + Math.floor(run.rand() * 2) : 2 + Math.floor(run.rand() * 2);
   const spots = sentrySpots(level);
-  // Room 2 has sentries; from room 3 on, either sentries or patrolling walkers (never both).
-  const patrols = run.stage >= 2 && run.rand() < 0.5 ? patrolSpecs(run, spots, count) : [];
-  const specs = patrols.length ? patrols : sentrySpecs(run, spots, count);
+  // Room 2 has sentries; rooms 3–4 sentries or patrolling walkers; rooms 6–9 one of
+  // sentries, walkers, burrowers, mimics or chargers. Never a mix of these.
+  const types = run.stage < 2 ? ['sentry'] : run.stage < 4 ? ['sentry', 'patrol'] : ['sentry', 'patrol', 'burrower', 'mimic', 'charger'];
+  const type = types[Math.floor(run.rand() * types.length)];
+  let specs = [];
+  if (type === 'patrol') specs = patrolSpecs(run, spots, count);
+  else if (type === 'burrower') specs = [{ type: 'burrower', w: 30, h: 26 }];
+  else if (type === 'mimic') specs = sentrySpecs(run, spots, count).map((e) => ({ type: 'mimic', x: e.x - 3, y: e.y - 6, w: T, h: T }));
+  else if (type === 'charger') specs = chargerSpecs(run, spots, Math.max(1, count - 1));
+  if (!specs.length) specs = sentrySpecs(run, spots, count); // no room for the chosen kind
   // Rooms 6–9: a bomber flies along the top and drops bombs on whoever it passes over.
   if (run.stage >= 5) {
     specs.push({ type: 'bomber', x0: 1 * T, x1: level.pxWidth - T - BOMBER.w, y: 1.1 * T, w: BOMBER.w, h: BOMBER.h, speed: BOMBER.speed, x: run.rand() < 0.5 ? 1 * T : level.pxWidth - T - BOMBER.w });
@@ -135,6 +146,28 @@ function sentrySpecs(run, spots, count) {
     chosen.push(s);
   }
   return chosen.map((s) => ({ type: 'sentry', x: s.tx * T + 3, y: (s.ty + 1) * T - 18, w: 18, h: 18 }));
+}
+
+// Chargers wait on wide platforms: runs of safe floor at least CHARGER.minRun tiles.
+function chargerSpecs(run, spots, count) {
+  return floorRuns(spots, CHARGER.minRun).length
+    ? pickN(run.rand, floorRuns(spots, CHARGER.minRun), count).map((r) => {
+      const x = (r.tx0 + Math.floor((r.tx1 - r.tx0) / 2)) * T + 1;
+      return { type: 'charger', x, y: (r.ty + 1) * T - CHARGER.size, w: CHARGER.size, h: CHARGER.size };
+    })
+    : [];
+}
+
+function floorRuns(spots, min) {
+  const key = new Set(spots.map((s) => `${s.tx},${s.ty}`));
+  const runs = [];
+  for (const s of spots) {
+    if (key.has(`${s.tx - 1},${s.ty}`)) continue;
+    let end = s.tx;
+    while (key.has(`${end + 1},${s.ty}`)) end++;
+    if (end - s.tx + 1 >= min) runs.push({ ty: s.ty, tx0: s.tx, tx1: end });
+  }
+  return runs;
 }
 
 // Walkers pace along runs of safe floor (the same safe cells sentries use), at least
@@ -163,6 +196,14 @@ function resetEnemies(room) {
   run.bullets = [];
   run.acid = null;
   run.enemies = room.enemySpecs.filter((e) => e.type !== 'acid').map((e) => ({ ...e, stunT: 0, dead: false, dir: 1, x: e.x ?? e.x0, size: e.size0, yNow: e.y }));
+  room.state.blocks = [];
+  for (const e of run.enemies) {
+    if (e.type === 'mimic') { e.block = { x: e.x, y: e.y, w: e.w, h: e.h }; room.state.blocks.push(e.block); e.shakeT = run.rand() * MIMIC.shakeEvery; }
+    if (e.type === 'burrower') { e.phase = 'hidden'; e.t = BURROW.hideMin * 0.6; e.x = 0; e.y = 0; }
+    if (e.type === 'charger') {
+      Object.assign(e, { mode: 'ready', homeX: e.x, vx: 0, vy: 0, onGround: false, coyoteT: 0, bufferT: 0, w: CHARGER.size, h: CHARGER.size });
+    }
+  }
   if (room.enemySpecs.some((e) => e.type === 'acid')) run.acid = { next: ACID.firstAt, countdown: 0, burning: 0 };
 }
 
@@ -223,6 +264,26 @@ function updateEnemies(room, dt) {
         e.cool = BOMBER.cooldown;
         run.shots.push({ x: cx - BOMBER.size / 2, y: e.y + e.h, vx: 0, vy: 40, g: BOMBER.gravity, kind: 'bomb' });
       }
+    } else if (e.type === 'burrower') {
+      e.t -= dt;
+      if (e.phase === 'hidden' && e.t <= 0) {
+        // surface under a visible player who's standing on something
+        const targets = ROLES.filter((r) => !cloaked(r) && room.players[r].body.onGround);
+        if (!targets.length) { e.t = 0.5; continue; }
+        const b = room.players[targets[Math.floor(run.rand() * targets.length)]].body;
+        e.x = b.x + P.CHAR.width / 2 - e.w / 2;
+        e.y = b.y + P.CHAR.height - e.h;
+        e.phase = 'warning'; e.t = BURROW.warn;
+      } else if (e.phase === 'warning' && e.t <= 0) {
+        e.phase = 'out'; e.t = BURROW.out;
+        room.events.push({ type: 'burrow' });
+      } else if (e.phase === 'out' && e.t <= 0) {
+        e.phase = 'hidden'; e.t = BURROW.hideMin + run.rand() * (BURROW.hideMax - BURROW.hideMin);
+      }
+    } else if (e.type === 'mimic') {
+      e.shakeT = (e.shakeT + dt) % MIMIC.shakeEvery;
+    } else if (e.type === 'charger') {
+      stepCharger(room, e, dt, cloaked);
     } else if (e.type === 'shooter') {
       e.cool = (e.cool ?? SHOOTER.period) - dt;
       if (e.cool <= 0) {
@@ -253,7 +314,8 @@ function updateEnemies(room, dt) {
     const br = { x: b.x, y: b.y, w: GUN.size, h: GUN.size };
     for (const e of run.enemies) {
       if (e.dead || !overlaps(br, liveRect(e))) continue;
-      if (e.type === 'sentry' || e.type === 'patrol') e.dead = true; else e.stunT = Math.max(e.stunT, 1.5);
+      if (e.type === 'burrower' && e.phase !== 'out') continue;
+      if (killable(e)) kill(room, e); else e.stunT = Math.max(e.stunT, 1.5);
       return false;
     }
     return true;
@@ -283,8 +345,25 @@ function updateEnemies(room, dt) {
   for (const r of ROLES) {
     const cr = shrink(charRect(room.players[r].body), 2);
     if (!cloaked(r)) {
+      const p = room.players[r];
       for (const e of run.enemies) {
         if (e.dead || e.stunT > 0) continue;
+        if (e.type === 'burrower') {
+          if (e.phase !== 'out') continue;
+          const c = { x: e.x + e.w / 2, y: e.y + e.h };
+          const me = { x: p.body.x + P.CHAR.width / 2, y: p.body.y + P.CHAR.height / 2 };
+          if (Math.hypot(me.x - c.x, me.y - c.y) < BURROW.radius + 12) { hits.push({ role: r, cause: 'burrower' }); break; }
+          continue;
+        }
+        if (e.type === 'mimic') {
+          // walking into its side ("pushing" it) gets you stabbed; standing on it is fine
+          const b = p.body, er = liveRect(e);
+          const level = b.y + P.CHAR.height > er.y + 2 && b.y < er.y + er.h;
+          const pushRight = p.input.right && Math.abs(b.x + P.CHAR.width - er.x) < 1.5;
+          const pushLeft = p.input.left && Math.abs(b.x - (er.x + er.w)) < 1.5;
+          if (level && (pushRight || pushLeft)) { hits.push({ role: r, cause: 'mimic' }); break; }
+          continue;
+        }
         if (overlaps(cr, shrink(liveRect(e), 2))) { hits.push({ role: r, cause: e.type }); break; }
       }
     }
@@ -301,6 +380,50 @@ function onOwnPool(level, body, role) {
   const tx0 = Math.floor((body.x + 4) / T), tx1 = Math.floor((body.x + P.CHAR.width - 4) / T);
   for (let tx = tx0; tx <= tx1; tx++) if (P.tileAt(level, tx, ty) === own) return true;
   return false;
+}
+
+// The charger: waits, charges in a straight line at a player who comes level and near,
+// gets tired, then walks slowly home; if it can't get home it waits where it got to.
+function stepCharger(room, e, dt, cloaked) {
+  const run = room.run;
+  const input = { left: false, right: false };
+  if (e.mode === 'ready') {
+    for (const r of ROLES) {
+      if (cloaked(r)) continue;
+      const b = room.players[r].body;
+      const dx = b.x + P.CHAR.width / 2 - (e.x + e.w / 2);
+      const dy = b.y + P.CHAR.height - (e.y + e.h);
+      if (Math.abs(dx) < CHARGER.sight && Math.abs(dy) < CHARGER.height) {
+        e.mode = 'charging'; e.dir = Math.sign(dx) || 1; e.run0 = e.x; e.blockedT = 0;
+        room.events.push({ type: 'charge' });
+        break;
+      }
+    }
+  }
+  if (e.mode === 'charging') {
+    e.speedMul = CHARGER.charge;
+    input[e.dir > 0 ? 'right' : 'left'] = true;
+  } else if (e.mode === 'tired') {
+    e.t -= dt;
+    if (e.t <= 0) { e.mode = 'returning'; e.bestD = Math.abs(e.x - e.homeX); e.stuckT = 0; }
+  } else if (e.mode === 'returning') {
+    e.speedMul = CHARGER.back;
+    const d = e.homeX - e.x;
+    if (Math.abs(d) < 2) { e.mode = 'ready'; e.vx = 0; }
+    else input[d > 0 ? 'right' : 'left'] = true;
+  }
+  const x0 = e.x;
+  P.stepBody(room.level, e, input, [], dt, room.state);
+  if (e.mode === 'charging') {
+    const blocked = Math.abs(e.x - x0) < 0.2 && Math.abs(e.vx) < 1;
+    e.blockedT = blocked ? e.blockedT + dt : 0;
+    if (e.blockedT > 0.1 || Math.abs(e.x - e.run0) >= CHARGER.maxRun) { e.mode = 'tired'; e.t = CHARGER.tired; e.vx = 0; }
+  } else if (e.mode === 'returning') {
+    const d = Math.abs(e.x - e.homeX);
+    if (d < e.bestD - 0.5) { e.bestD = d; e.stuckT = 0; } else e.stuckT += dt;
+    if (e.stuckT > 1) { e.mode = 'ready'; e.homeX = e.x; e.vx = 0; } // as close as it can get
+  } else if (e.mode === 'ready') e.vx = 0;
+  void run;
 }
 
 function liveRect(e) {
@@ -328,6 +451,12 @@ function toStart(room, role) {
 }
 
 // ── Items ──
+
+const killable = (e) => ['sentry', 'patrol', 'mimic', 'burrower'].includes(e.type);
+function kill(room, e) {
+  e.dead = true;
+  if (e.block) room.state.blocks = room.state.blocks.filter((b) => b !== e.block);
+}
 
 const allItems = (run) => run.items.concat(run.personal.fire, run.personal.water);
 const ownedIds = (run, role) => run.personal[role].map((i) => i.id);
@@ -561,7 +690,8 @@ function use(room, role) {
   switch (it.id) {
     case 'blast':
       for (const e of run.enemies) {
-        if ((e.type === 'sentry' || e.type === 'patrol') && near(liveRect(e), 80)) e.dead = true;
+        if (e.type === 'burrower' && e.phase !== 'out') continue;
+        if (killable(e) && near(liveRect(e), 80)) kill(room, e);
         else if (near(liveRect(e), 140)) e.stunT = 2.5;
       }
       run.shots = run.shots.filter((sh) => !near({ x: sh.x, y: sh.y, w: 10, h: 10 }, 110));
@@ -644,7 +774,10 @@ function view(room) {
     guardianReady: run.items.some((i) => i.id === 'guardian') && !run.shieldUsed,
     enemies: run.enemies.filter((e) => !e.dead).map((e) => {
       const r = liveRect(e);
-      return { type: e.type, x: r.x, y: r.y, w: r.w, h: r.h, stun: e.stunT > 0 };
+      return {
+        type: e.type, x: r.x, y: r.y, w: r.w, h: r.h, stun: e.stunT > 0,
+        phase: e.phase, shake: e.type === 'mimic' && e.shakeT > MIMIC.shakeEvery - MIMIC.shake, mode: e.mode, dir: e.dir,
+      };
     }),
     shots: run.shots.map((sh) => ({ x: sh.x, y: sh.y, kind: sh.kind })),
     bullets: run.bullets.map((b) => ({ x: b.x, y: b.y })),

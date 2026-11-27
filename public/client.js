@@ -230,7 +230,7 @@
     if (s.run) renderRun(s.run, s.phase);
   });
 
-  const CAUSE = { patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
+  const CAUSE = { burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
   socket.on('event', (e) => {
     if (e.type === 'level') {
       setLevel(e);
@@ -932,6 +932,41 @@
         ctx.fillStyle = '#fff';
         const s = Math.max(3, e.w / 8);
         ctx.fillRect(e.x + e.w * 0.25, e.y + e.h * 0.3, s, s); ctx.fillRect(e.x + e.w * 0.65, e.y + e.h * 0.3, s, s);
+      } else if (e.type === 'burrower') {
+        const gx = e.x + e.w / 2, gy = e.y + e.h;
+        if (e.phase === 'warning') { // cracks and dust where it will burst out
+          ctx.strokeStyle = `rgba(255,200,120,${0.5 + 0.4 * Math.sin(now / 80)})`; ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let k = -2; k <= 2; k++) { ctx.moveTo(gx + k * 6, gy); ctx.lineTo(gx + k * 9, gy - 6 - Math.abs(k) * 2); }
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(255,120,80,0.35)';
+          ctx.beginPath(); ctx.arc(gx, gy, 1.5 * TILE + 12, Math.PI, 0); ctx.stroke();
+        } else if (e.phase === 'out') {
+          ctx.fillStyle = '#8b5a2b';
+          ctx.beginPath(); ctx.arc(gx, gy, e.w / 2 + 2, Math.PI, 0); ctx.fill();
+          ctx.fillStyle = '#ffd1a8'; ctx.beginPath(); ctx.moveTo(gx - 4, gy - e.w / 2); ctx.lineTo(gx, gy - e.w / 2 - 7); ctx.lineTo(gx + 4, gy - e.w / 2); ctx.fill();
+          ctx.fillStyle = '#fff'; ctx.fillRect(gx - 7, gy - 12, 3, 3); ctx.fillRect(gx + 4, gy - 12, 3, 3);
+          ctx.strokeStyle = 'rgba(255,120,80,0.6)'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(gx, gy, 1.5 * TILE + 12, Math.PI, 0); ctx.stroke();
+        }
+      } else if (e.type === 'mimic') {
+        // looks exactly like a box… except when it shakes
+        const sx = e.shake ? Math.sin(now / 25) * 2 : 0;
+        const x = e.x + sx, y = e.y, n = e.w;
+        ctx.fillStyle = '#9a6a3a'; ctx.fillRect(x, y, n, n);
+        ctx.strokeStyle = '#6b4626'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, n - 2, n - 2);
+        ctx.beginPath(); ctx.moveTo(x + 3, y + 3); ctx.lineTo(x + n - 3, y + n - 3); ctx.moveTo(x + n - 3, y + 3); ctx.lineTo(x + 3, y + n - 3); ctx.stroke();
+        if (e.shake) { ctx.fillStyle = '#ff3b3b'; ctx.fillRect(x + n / 2 - 5, y + n / 2 - 2, 3, 3); ctx.fillRect(x + n / 2 + 2, y + n / 2 - 2, 3, 3); }
+      } else if (e.type === 'charger') {
+        const tired = e.mode === 'tired';
+        ctx.fillStyle = tired ? '#7a6a6a' : '#c0392b';
+        ctx.fillRect(e.x, e.y + 4, e.w, e.h - 4);
+        ctx.fillStyle = '#eee';
+        const front = (e.dir || 1) > 0 ? e.x + e.w : e.x;
+        ctx.beginPath(); ctx.moveTo(front, e.y + 6); ctx.lineTo(front + (e.dir || 1) * 7, e.y); ctx.lineTo(front, e.y + 11); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(e.x + e.w / 2 + (e.dir || 1) * 4 - 1, e.y + 9, 3, 3);
+        if (tired) { ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px system-ui'; ctx.fillText('z z', e.x + e.w / 2, e.y - 4); }
+        if (e.mode === 'charging') { ctx.fillStyle = 'rgba(255,255,255,0.4)'; for (let k = 1; k <= 3; k++) ctx.fillRect(e.x - (e.dir || 1) * k * 7 + e.w / 2, e.y + 8 + k * 3, 5, 2); }
       } else if (e.type === 'patrol') {
         const step = Math.sin(now / 90) * 2;
         ctx.fillStyle = '#9b4fd0';

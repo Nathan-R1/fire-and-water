@@ -276,6 +276,7 @@ function snapshot(room) {
     boxes: room.state.boxes.map((b) => ({ x: b.x, y: b.y, vy: b.vy, onGround: b.onGround })),
     pulleys: room.state.pulleys.map((p) => p.o),
     geysers: room.state.geysers || [],
+    blocks: room.state.blocks || [],
   };
 }
 
