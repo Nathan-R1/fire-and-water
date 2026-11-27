@@ -614,3 +614,21 @@ test("charger: if it can't get back up to its platform it waits as close as it g
   assert.equal(e.mode, 'ready', 'gave up returning');
   assert.ok(e.y > 3 * T, 'waiting down below, as close as it could get');
 });
+
+test('walkers turn around at boxes (and can leave one pushed into them)', () => {
+  const r = run(60);
+  arena(r, ['################', '#..............#', '#..............#', '#F...........Wfw', '################']);
+  r.enemySpecs = [{ type: 'patrol', x0: 2 * T, x1: 13 * T, x: 3 * T, y: 4 * T - 20, w: 20, h: 20, speed: 45 }];
+  C.onAttempt(r);
+  r.state.boxes.push({ x: 8 * T, y: 3 * T, w: T, h: T, vy: 0, onGround: true });
+  const e = r.run.enemies[0];
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  let maxRight = 0;
+  for (let i = 0; i < 60 * 12; i++) { tick(r); maxRight = Math.max(maxRight, e.x + e.w); }
+  assert.ok(maxRight <= 8 * T + 0.5, `never walked into the box (reached ${(maxRight / T).toFixed(2)})`);
+  // a box pushed onto it: it doesn't get stuck
+  r.state.boxes[0].x = e.x - 4;
+  const x0 = e.x;
+  tick(r, 60);
+  assert.notEqual(e.x, x0, 'still walking');
+});
