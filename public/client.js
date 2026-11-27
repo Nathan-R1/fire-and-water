@@ -80,12 +80,32 @@
   socket.on('joined', (msg) => {
     CHAR = msg.char;
     TILE = msg.tile;
-    myRole = msg.role;
     setLevel(msg.level);
+    setRoles(msg.roles || [], msg.role);
+  });
+
+  // Which characters this device controls, and which one the buttons drive.
+  // One device can hold both (for testing alone); the other one stands still.
+  let myRoles = [];
+  function setRoles(roles, active) {
+    myRoles = roles;
+    if (active !== myRole) { // start predicting the newly active character from scratch
+      myRole = active;
+      me = null; meDead = false; pending = []; errX = errY = 0;
+    }
     $('controls').hidden = !myRole;
     $('restart').hidden = !myRole;
+    updateSwap();
     updateStatus();
-  });
+  }
+  socket.on('roles', (msg) => setRoles(msg.roles, msg.active));
+  socket.on('notice', (msg) => flashStatus(msg));
+
+  function updateSwap() {
+    const next = myRole === 'fire' ? 'water' : 'fire';
+    $('swap').textContent = myRole ? `⇄ ${next === 'fire' ? '🔥' : '💧'}` : '⇄ Play';
+  }
+  $('swap').addEventListener('click', () => socket.emit('swap'));
 
   socket.on('state', (s) => {
     if (!level || s.level !== levelIndex) return; // level change in flight
@@ -128,8 +148,9 @@
     if (statusOverride) return;
     if (!myRole) { $('status').textContent = 'Room full: watching'; return; }
     const other = myRole === 'fire' ? 'water' : 'fire';
-    const waiting = target && !target[other].connected;
-    $('status').textContent = `${myRole === 'fire' ? '🔥 Fire' : '💧 Water'}${waiting ? ' · waiting for partner' : ''}`;
+    const both = myRoles.length > 1;
+    const waiting = !both && target && !target[other].connected;
+    $('status').textContent = `${myRole === 'fire' ? '🔥 Fire' : '💧 Water'}${both ? ' · solo (both)' : waiting ? ' · waiting for partner' : ''}`;
   }
 
   function flashStatus(text) {
@@ -217,6 +238,7 @@
     if (d) { keyDirs.delete(d); keyDirs.add(d); sendDir(); }
     if (jumpKeys.has(e.code)) { e.preventDefault(); jumpQueued = true; }
     if (e.code === 'KeyR' && myRole) socket.emit('restart');
+    if (e.code === 'Tab' || e.code === 'KeyQ') { e.preventDefault(); socket.emit('swap'); }
   });
   addEventListener('keyup', (e) => {
     const d = keyDir[e.code];
@@ -227,7 +249,7 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden || !myRole) return;
     keyDirs.clear(); touchDirs.clear(); sendDir();
-    socket.emit('i', { s: ++seq, d: 0, j: false });
+    for (const r of myRoles) socket.emit('i', { r, s: ++seq, d: 0, j: false });
     pending = [];
   });
 
@@ -253,7 +275,10 @@
 
   function clientTick() {
     if (!myRole || !level) return;
-    const inp = { s: ++seq, d: currentDir(), j: jumpQueued };
+    // The character you're not driving gets a "stand still" input every tick, so the
+    // server keeps simulating it normally instead of waiting for input.
+    for (const r of myRoles) if (r !== myRole) socket.emit('i', { r, s: ++seq, d: 0, j: false });
+    const inp = { r: myRole, s: ++seq, d: currentDir(), j: jumpQueued };
     jumpQueued = false;
     socket.emit('i', inp);
     if (target && !playing()) return; // the server ignores inputs during pauses

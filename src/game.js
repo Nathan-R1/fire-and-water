@@ -62,30 +62,34 @@ function newPlayer() {
   return { socketId: null, input: { left: false, right: false }, body: null, queue: [], lastSeq: 0, ack: 0, waited: 0 };
 }
 
+// Take control of a specific character if nobody has it. Returns true on success.
+function claim(room, role, socketId) {
+  if (!ROLES.includes(role)) return false;
+  const p = room.players[role];
+  if (p.socketId) return p.socketId === socketId;
+  p.socketId = socketId;
+  p.queue = [];
+  p.lastSeq = 0;
+  p.ack = 0;
+  return true;
+}
+
+// Give up control of one character (it stands still until someone claims it).
+function release(room, role) {
+  if (!ROLES.includes(role)) return;
+  const p = room.players[role];
+  p.socketId = null;
+  p.input = { left: false, right: false };
+  p.queue = [];
+}
+
 // Assign the first free role, or null if the room is full (spectator).
 function join(room, socketId) {
-  for (const role of ROLES) {
-    if (!room.players[role].socketId) {
-      const p = room.players[role];
-      p.socketId = socketId;
-      p.queue = [];
-      p.lastSeq = 0;
-      p.ack = 0;
-      return role;
-    }
-  }
-  return null;
+  return ROLES.find((role) => claim(room, role, socketId)) || null;
 }
 
 function leave(room, socketId) {
-  for (const role of ROLES) {
-    const p = room.players[role];
-    if (p.socketId === socketId) {
-      p.socketId = null;
-      p.input = { left: false, right: false };
-      p.queue = [];
-    }
-  }
+  for (const role of ROLES) if (room.players[role].socketId === socketId) release(room, role);
 }
 
 function isEmpty(room) {
@@ -244,5 +248,5 @@ function takeEvents(room) {
 }
 
 module.exports = {
-  ROLES, TICKS, LEVELS, MAX_WAIT, createRoom, loadLevel, join, leave, isEmpty, setInput, queueInput, jump, restart, step, snapshot, takeEvents,
+  ROLES, TICKS, LEVELS, MAX_WAIT, createRoom, loadLevel, claim, release, join, leave, isEmpty, setInput, queueInput, jump, restart, step, snapshot, takeEvents,
 };

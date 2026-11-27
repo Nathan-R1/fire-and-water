@@ -84,3 +84,16 @@ test('snapshot includes level, phase and mechanism state', () => {
   assert.equal(s.phase, 'playing');
   assert.ok(Array.isArray(s.gates));
 });
+
+test('claim and release let one device control both characters', () => {
+  const r = room();
+  assert.equal(g.join(r, 'a'), 'fire');
+  assert.equal(g.claim(r, 'water', 'a'), true, 'free character can be claimed');
+  assert.equal(g.claim(r, 'water', 'b'), false, 'taken by someone else');
+  assert.equal(g.claim(r, 'fire', 'a'), true, 'already yours');
+  g.release(r, 'water');
+  assert.equal(g.join(r, 'b'), 'water');
+  g.leave(r, 'a');
+  assert.equal(r.players.fire.socketId, null);
+  assert.equal(r.players.water.socketId, 'b');
+});
