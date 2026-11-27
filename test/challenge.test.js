@@ -235,7 +235,7 @@ test('personal passives change the physics of their owner only', () => {
 test('boss 1: the flyer moves and the walker grows over 60 s', () => {
   const r = run(12);
   r.run.stage = 4; r.loadStage();
-  assert.equal(r.levelDef.id, 'boss-1');
+  assert.ok(r.levelDef.id.startsWith('boss-1'), r.levelDef.id);
   const flyer = r.run.enemies.find((e) => e.type === 'flyer');
   const walker = r.run.enemies.find((e) => e.type === 'walker');
   const fx = flyer.x;
@@ -705,4 +705,36 @@ test('Leapfrog: the bomber patrols one section of the top of the room', () => {
   assert.ok(b.y < 2 * T, `up at the top (row ${(b.y / T).toFixed(1)})`);
   const width = (b.x1 + b.w - b.x0) / T;
   assert.ok(width >= 6 && width < 20, `covers one section (${width.toFixed(1)} tiles)`);
+});
+
+test('boss 1 picks one of three arenas, each with its own twin patrols', () => {
+  const seen = new Set();
+  for (let seed = 1; seed <= 40; seed++) {
+    const r = run(seed);
+    r.run.stage = 4; r.loadStage();
+    seen.add(r.levelDef.id);
+    const flyer = r.run.enemies.find((e) => e.type === 'flyer');
+    assert.equal(flyer.y, r.levelDef.boss.flyer.y * T, 'flies where this arena says');
+  }
+  assert.deepEqual([...seen].sort(), ['boss-1', 'boss-1b', 'boss-1c']);
+});
+
+test('Half Walls: the ground twin is shut in the middle room until a lever opens a gate', () => {
+  const r = run(70);
+  const def = require('../levels/boss-1c.json');
+  r.run.stage = 4;
+  // load this arena specifically
+  for (let k = 0; k < 50 && r.levelDef.id !== 'boss-1c'; k++) r.loadStage();
+  assert.equal(r.levelDef.id, 'boss-1c');
+  const walker = r.run.enemies.find((e) => e.type === 'walker');
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  let minX = Infinity, maxX = -Infinity;
+  for (let i = 0; i < 60 * 25; i++) { tick(r); minX = Math.min(minX, walker.x); maxX = Math.max(maxX, walker.x + walker.size); }
+  assert.ok(minX >= 13 * T - 0.5 && maxX <= 27 * T + 0.5, `stayed between the gates (${(minX / T).toFixed(1)}–${(maxX / T).toFixed(1)})`);
+  // open the left gate (as if the lever was pulled): it can now leave the middle room
+  r.state.levers[0] = true;
+  minX = Infinity;
+  for (let i = 0; i < 60 * 25; i++) { tick(r); minX = Math.min(minX, walker.x); }
+  assert.ok(minX < 12 * T, `roamed out through the open gate (got to ${(minX / T).toFixed(1)})`);
+  void def;
 });

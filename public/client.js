@@ -948,15 +948,31 @@
   }
   const HAND = { rock: '✊', paper: '✋', scissors: '✌️' };
 
-  // Shrink the drops screen until it fits vertically (no scrolling), down to 45%.
+  // Fit the drops screen vertically without scrolling. First widen the cards (their
+  // text wraps onto fewer lines); only when every row of cards already fills the width
+  // shrink everything, down to 45%.
+  const CARD_MIN = 150;
   function fitMap() {
     const view = $('mapview');
     if (view.hidden) return;
+    const fits = () => view.scrollHeight <= view.clientHeight + 1;
+    const groups = [...view.querySelectorAll('.cards')];
+    // widest a card can be in each row while the row stays on one line
+    const maxW = (g, s) => {
+      const n = g.children.length || 1;
+      return Math.max(CARD_MIN * s, (g.clientWidth - 10 * s * (n - 1)) / n);
+    };
+    const setWidth = (w, s) => { for (const g of groups) g.style.setProperty('--cw', `${Math.min(w, maxW(g, s))}px`); };
     let s = 1;
     view.style.setProperty('--s', s);
-    while (view.scrollHeight > view.clientHeight + 1 && s > 0.45) {
+    let w = CARD_MIN;
+    setWidth(w, s);
+    const widest = () => Math.max(CARD_MIN, ...groups.map((g) => maxW(g, s)));
+    while (!fits() && w < widest()) { w += 20; setWidth(w, s); }
+    while (!fits() && s > 0.45) {
       s = Math.round((s - 0.05) * 100) / 100;
       view.style.setProperty('--s', s);
+      setWidth(widest(), s); // stay full width while shrinking
     }
   }
   addEventListener('resize', fitMap);

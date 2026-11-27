@@ -21,7 +21,11 @@ const BURROW = { hideMin: 5, hideMax: 10, warn: 2, out: 0.6, radius: 1.5 * 24 };
 const MIMIC = { shakeEvery: 5, shake: 0.6 };                                       // a box that stabs
 const CHARGER = { size: 22, sight: 6 * 24, height: 1.5 * 24, charge: 1.6, back: 0.35, maxRun: 10 * 24, tired: 5, minRun: 5 };
 const SHOOTER = { period: 1.6, speed: 200, size: 10 };
-const BOSS_DEFS = { boss1: require('../levels/boss-1.json'), boss2: require('../levels/boss-2.json') };
+// Boss 1 has three arenas (picked at random per run); boss 2 has one.
+const BOSS_DEFS = {
+  boss1: [require('../levels/boss-1.json'), require('../levels/boss-1b.json'), require('../levels/boss-1c.json')],
+  boss2: [require('../levels/boss-2.json')],
+};
 const T = P.TILE;
 
 // Small seeded RNG (mulberry32), so a run can be replayed from its seed.
@@ -107,11 +111,13 @@ function sentrySpots(level) {
   return spots;
 }
 
-function enemySpecs(run, kind, level) {
+function enemySpecs(run, kind, level, def = {}) {
   if (kind === 'boss1') {
+    // each arena says where the twins fly and walk (tiles); defaults: the original arena
+    const b = def.boss || { flyer: { x0: 4, x1: 36, y: 9.5, amp: 3 }, walker: { x0: 6, x1: 33, x: 6 } };
     return [
-      { type: 'flyer', x0: 4 * T, x1: 36 * T, y: 9.5 * T, amp: 3 * T, speed: 95, w: 34, h: 24 },
-      { type: 'walker', x0: 6 * T, x1: 33 * T, floor: 21 * T, speed: 70, size0: 22, size1: 72, grow: 60 },
+      { type: 'flyer', x0: b.flyer.x0 * T, x1: b.flyer.x1 * T, y: b.flyer.y * T, amp: b.flyer.amp * T, speed: 95, w: 34, h: 24 },
+      { type: 'walker', x0: b.walker.x0 * T, x1: b.walker.x1 * T, x: b.walker.x * T, floor: 21 * T, speed: 70, size0: 22, size1: 72, grow: 60 },
     ];
   }
   if (kind === 'boss2') {
@@ -555,12 +561,13 @@ function loadStage(room, load) {
     def = room.levels[i];
     label = `Room ${run.stage + 1}/${STAGES.length}`;
   } else {
-    def = BOSS_DEFS[kind];
+    const arenas = BOSS_DEFS[kind];
+    def = arenas[Math.floor(run.rand() * arenas.length)];
     label = `Boss ${kind === 'boss1' ? 1 : 2}`;
   }
   room.enemySpecs = [];
   load(def, { index: run.stage, total: STAGES.length, label });
-  room.enemySpecs = enemySpecs(run, kind, room.level);
+  room.enemySpecs = enemySpecs(run, kind, room.level, def);
   onAttempt(room);
 }
 

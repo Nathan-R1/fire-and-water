@@ -50,7 +50,7 @@ function level(num, slug, name, world, build) {
   };
   build(L);
   const id = typeof num === 'string' ? num : `${String(num).padStart(2, '0')}-${slug}`; // e.g. 'boss-1' (not in the campaign list)
-  const def = { id, name, world, rows: g.map((r) => r.join('')), objects };
+  const def = { id, name, world, rows: g.map((r) => r.join('')), objects, ...(L.extra || {}) };
   const json = JSON.stringify(def, null, 2).replace(/\[\n\s+(-?\d+),\n\s+(-?\d+)\n\s+\]/g, '[$1, $2]');
   fs.writeFileSync(path.join(OUT, `${id}.json`), json + '\n');
 }

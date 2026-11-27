@@ -296,8 +296,9 @@ body.on-menu { touch-action: auto; }
   text-align: center;
 }
 #mapview[hidden], #over[hidden] { display: none; }
-/* Everything on the drops screen is sized from --s, which fitMap() in client.js
-   shrinks until the whole screen fits vertically. */
+/* fitMap() in client.js fits the drops screen vertically: first it widens the cards
+   (--cw, so their text wraps onto fewer lines), and only once each row of cards fills
+   the width does it shrink everything (--s). */
 #mapview { --s: 1; padding: calc(14px * var(--s)) 16px; }
 #mapview h2 { font-size: calc(21px * var(--s)); margin: calc(8px * var(--s)) 0; }
 #mapview .muted { font-size: calc(14px * var(--s)); margin: calc(6px * var(--s)) 0; }
@@ -307,9 +308,9 @@ body.on-menu { touch-action: auto; }
 .node.here { outline: 2px solid #ffd84a; }
 .node.boss { width: calc(28px * var(--s)); height: calc(28px * var(--s)); background: #5a2340; }
 .link { width: 10px; height: 2px; background: #3a3552; }
-.cards { display: flex; gap: calc(10px * var(--s)); justify-content: center; flex-wrap: wrap; margin: calc(8px * var(--s)) 0 calc(14px * var(--s)); }
+.cards { display: flex; gap: calc(10px * var(--s)); justify-content: center; flex-wrap: nowrap; margin: calc(8px * var(--s)) 0 calc(14px * var(--s)); }
 .card {
-  width: calc(150px * var(--s, 1));
+  width: var(--cw, 150px);
   padding: calc(10px * var(--s, 1));
   border-radius: 10px;
   border: 2px solid #3a3552;
