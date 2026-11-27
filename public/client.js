@@ -4,18 +4,53 @@
   const ctx = canvas.getContext('2d');
   const { T } = Physics;
 
-  // ---- Room code: from ?room=, otherwise make one and put it in the URL ----
+  // ---- Start menu, or straight into a room from a ?room= link ----
   // ?level=N starts a new room at level N (handy for testing).
+  const CODE_RE = /^[A-Z0-9]{4,8}$/;
   const params = new URLSearchParams(location.search);
-  let code = (params.get('room') || '').toUpperCase();
-  if (!/^[A-Z0-9]{4,8}$/.test(code)) {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    code = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    params.set('room', code);
-    history.replaceState(null, '', `${location.pathname}?${params}`);
-  }
+  const code = (params.get('room') || '').toUpperCase();
   const startLevel = parseInt(params.get('level'), 10) || undefined;
+
+  const goToRoom = (c) => {
+    const p = new URLSearchParams({ room: c });
+    if (startLevel) p.set('level', startLevel);
+    location.href = `${location.pathname}?${p}`;
+  };
+
+  if (!CODE_RE.test(code)) {
+    // No room yet: show the menu and stop here (no connection until you pick one).
+    document.body.classList.add('on-menu');
+    $('menu').hidden = false;
+    for (const id of ['hud', 'stage', 'rotate', 'controls']) $(id).hidden = true;
+    $('create').addEventListener('click', () => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      goToRoom(Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join(''));
+    });
+    $('joincode').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
+    $('joinform').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const c = $('joincode').value.trim().toUpperCase();
+      if (CODE_RE.test(c)) return goToRoom(c);
+      $('menuerror').textContent = 'Room codes are 4–8 letters or numbers.';
+      $('menuerror').hidden = false;
+    });
+    return;
+  }
   $('code').textContent = code;
+
+  $('back').addEventListener('click', () => { location.href = location.pathname; });
+
+  // Settings dropdown: restart, fullscreen, share.
+  const settings = $('settings');
+  const setSettings = (open) => {
+    settings.hidden = !open;
+    $('settingsbtn').setAttribute('aria-expanded', String(open));
+  };
+  $('settingsbtn').addEventListener('click', (e) => { e.stopPropagation(); setSettings(settings.hidden); });
+  document.addEventListener('pointerdown', (e) => {
+    if (!settings.hidden && !e.target.closest('.settings-wrap')) setSettings(false);
+  });
+  settings.addEventListener('click', () => setSettings(false)); // any item closes it
 
   $('share').addEventListener('click', async () => {
     const url = `${location.origin}${location.pathname}?room=${code}`;
@@ -272,7 +307,7 @@
     if (e.code === 'KeyR' && myRole) socket.emit('restart');
     if (e.code === 'Tab' || e.code === 'KeyQ') { e.preventDefault(); socket.emit('swap'); }
     if (e.code === 'KeyL') $('levelpicker').hidden ? openPicker() : closePicker();
-    if (e.code === 'Escape') closePicker();
+    if (e.code === 'Escape') { closePicker(); setSettings(false); }
   });
   addEventListener('keyup', (e) => {
     const d = keyDir[e.code];

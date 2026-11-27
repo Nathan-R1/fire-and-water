@@ -8,15 +8,34 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="menu" hidden>
+    <div class="menu-card">
+      <h1>🔥 Fire &amp; Water 💧</h1>
+      <p class="menu-sub">Two players, one puzzle. Play together on two phones, or on one with ⇄.</p>
+      <button id="create" type="button" class="menu-primary">Create a room</button>
+      <form id="joinform" autocomplete="off">
+        <input id="joincode" name="code" maxlength="8" placeholder="Room code" aria-label="Room code" autocapitalize="characters" spellcheck="false">
+        <button type="submit">Join</button>
+      </form>
+      <p id="menuerror" class="menu-error" hidden></p>
+    </div>
+  </div>
+
   <header id="hud">
+    <button id="back" type="button" aria-label="Back to menu" title="Back to menu">←</button>
     <span id="status">Connecting…</span>
     <span id="levelinfo"><button id="levelbtn" type="button" title="Choose a level (L)"><b id="levelnum">–</b> <span id="levelname"></span> ▾</button> · <span id="timer">0:00</span> · <span id="gemcount"></span></span>
     <span class="hud-right">
       <span id="ping" title="Round trip to the server"></span>
       <button id="swap" type="button" aria-label="Switch character" title="Switch character (Tab)">⇄</button>
-      <button id="restart" type="button" aria-label="Restart level" hidden>↺</button>
-      <button id="fullscreen" type="button" hidden aria-label="Fullscreen">⛶</button>
-      <button id="share" type="button">Room <b id="code">----</b> · Share</button>
+      <span class="settings-wrap">
+        <button id="settingsbtn" type="button" aria-label="Settings" aria-haspopup="true" aria-expanded="false" title="Settings">⚙</button>
+        <div id="settings" role="menu" hidden>
+          <button id="restart" type="button" role="menuitem" hidden>↺ Restart level</button>
+          <button id="fullscreen" type="button" role="menuitem" hidden>⛶ Fullscreen</button>
+          <button id="share" type="button" role="menuitem">🔗 Share room <b id="code">----</b></button>
+        </div>
+      </span>
     </span>
   </header>
 
