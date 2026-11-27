@@ -216,8 +216,8 @@
       me = null; meDead = false; errX = errY = 0;
     } else if (e.type === 'gem') {
       if (e.role === myRole) navigator.vibrate?.(15);
-    } else if (e.type === 'shield') {
-      showBanner(`<b>🛡 Guardian!</b>${e.role === 'fire' ? '🔥 Fire' : '💧 Water'} was saved`, 1200);
+    } else if (e.type === 'guardian') {
+      showBanner(`<b>🛡 Guardian!</b>${e.role === 'fire' ? '🔥 Fire' : '💧 Water'} was sent back to the start`, 1300);
     } else if (e.type === 'bonus') {
       const b = Bonuses.BY_ID[e.id];
       if (b) flashStatus(`+ ${b.name}${e.role ? ` (${e.role === 'fire' ? '🔥' : '💧'})` : ''}`);
@@ -574,6 +574,18 @@
     });
   }
 
+  function drawGeysers(s, now) {
+    for (const g of s.geysers || []) {
+      ctx.fillStyle = 'rgba(160, 230, 255, 0.18)';
+      ctx.fillRect(g.x, g.y, g.w, g.h);
+      ctx.fillStyle = 'rgba(220, 245, 255, 0.6)';
+      for (let k = 0; k < 6; k++) {
+        const off = (now / 6 + k * 29) % g.h;
+        ctx.fillRect(g.x + 6 + ((k * 13) % (g.w - 12)), g.y + g.h - off, 3, 7);
+      }
+    }
+  }
+
   function drawBoxes(s) {
     for (const b of s.boxes) {
       const x = b.x, y = b.y, n = Physics.BOX.size;
@@ -633,7 +645,12 @@
     const { width: w, height: h } = CHAR;
     const dead = s.phase === 'dead' || t.dead;
     const blink = s.run && s.run.invuln[role] > 0 && Math.floor(performance.now() / 100) % 2;
-    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : blink ? 0.35 : 1;
+    const fx = s.run && s.run.effects ? s.run.effects[role] : null;
+    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : blink ? 0.35 : fx && fx.cloakT > 0 ? 0.4 : 1;
+    if (fx && fx.shieldT > 0) {
+      ctx.strokeStyle = '#7ff3ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x + w / 2, p.y + h / 2, h * 0.75, 0, Math.PI * 2); ctx.stroke();
+    }
     ctx.fillStyle = COLORS[role];
     ctx.fillRect(p.x, p.y, w, h);
     // Eyes look the way you're moving
@@ -653,7 +670,9 @@
 
   // ════════ Challenge mode UI ════════
   const roleIcon = (r) => (r === 'fire' ? '🔥' : '💧');
-  const kindLabel = (b) => (b.type === 'power' ? 'Power · always on (just you)' : b.type === 'instant' ? 'Instant' : b.color === 'yellow' ? 'Item · active (equip it, use with ✦)' : 'Item · passive (always on for the team)');
+  const USES = { combat: 'once per room', once: 'one use for the team', cooldown: 'unlimited', free: 'unlimited' };
+  const kindLabel = (b) => b.type === 'instant' ? 'Instant'
+    : `${b.scope === 'team' ? 'Team' : 'Personal'} · ${b.color === 'yellow' ? `active (${USES[b.uses] || 'unlimited'}; equip it, use with ✦)` : 'passive (always on)'} · ${b.rarity}`;
   let run = null;
   let lastBar = '', lastMap = '', lastOver = '';
 
@@ -668,7 +687,7 @@
 
   // Items (team) and powers (per player) under the HUD. Tap one for its description.
   function renderBar(r) {
-    const key = JSON.stringify([r.items, r.powers, r.equip, myRoles]);
+    const key = JSON.stringify([r.items, r.personal, r.equip, myRoles]);
     if (key === lastBar) return;
     lastBar = key;
     const bar = $('bar');
@@ -685,25 +704,27 @@
     };
     const label = (t) => { const s = document.createElement('span'); s.className = 'label'; s.textContent = t; return s; };
     add(label(r.items.length ? 'Team' : 'Team: no items yet'));
-    for (const it of r.items) {
+    const itemChip = (it, owner) => {
       const b = Bonuses.BY_ID[it.id];
       const who = ['fire', 'water'].filter((role) => r.equip[role] === it.uid).map(roleIcon).join('');
-      add(chip(b, `${b.color}${it.ready ? '' : ' spent'}`, who, () => showTip(b, it)));
-    }
+      const off = it.spent || !it.ready || it.cool;
+      return chip(b, `${b.color}${off ? ' spent' : ''}${it.spent ? ' gone' : ''}`, it.spent ? '✕' : who, () => showTip(b, it, owner));
+    };
+    for (const it of r.items) add(itemChip(it, null));
     for (const role of ['fire', 'water']) {
-      if (!r.powers[role].length) continue;
+      if (!r.personal[role].length) continue;
       const sep = document.createElement('span'); sep.className = 'sep'; add(sep);
       add(label(roleIcon(role)));
-      for (const id of r.powers[role]) { const b = Bonuses.BY_ID[id]; add(chip(b, 'power', '', () => showTip(b, null))); }
+      for (const it of r.personal[role]) add(itemChip(it, role));
     }
   }
 
-  function showTip(b, item) {
+  function showTip(b, item, owner) {
     const tip = $('tip');
     tip.innerHTML = `<h3><span style="color:${b.color === 'green' ? '#5fd35a' : b.color === 'yellow' ? '#ffd84a' : '#c9c0ff'}">${b.icon}</span>${escapeHtml(b.name)}</h3>
-      <div class="kind">${kindLabel(b)}${item && !item.ready ? ' · used, recharges next room' : ''}</div><p>${escapeHtml(b.desc)}</p><div class="actions"></div>`;
-    if (item && b.color === 'yellow') {
-      for (const role of myRoles) {
+      <div class="kind">${kindLabel(b)}${owner ? ` · ${roleIcon(owner)}'s` : ''}${item && item.spent ? ' · used up' : item && !item.ready ? ' · used, recharges next room' : ''}</div><p>${escapeHtml(b.desc)}</p><div class="actions"></div>`;
+    if (item && b.color === 'yellow' && !item.spent) {
+      for (const role of myRoles.filter((r2) => !owner || r2 === owner)) {
         const btn = document.createElement('button');
         const on = run.equip[role] === item.uid;
         btn.textContent = on ? `Equipped by ${roleIcon(role)} ✓` : `Equip for ${roleIcon(role)}`;
@@ -719,21 +740,23 @@
   // ✦ use-item button above jump: shows the item you have equipped.
   function equippedItem() {
     if (!run || !myRole) return null;
-    return run.items.find((i) => i.uid === run.equip[myRole]) || null;
+    const uid = run.equip[myRole];
+    return run.items.concat(run.personal[myRole]).find((i) => i.uid === uid) || null;
   }
   function renderUse() {
     const btn = $('use');
     const it = equippedItem();
     btn.hidden = mode !== 'challenge' || !myRole;
     btn.innerHTML = it ? Bonuses.BY_ID[it.id].icon : '✦';
-    btn.classList.toggle('spent', !it || !it.ready);
+    btn.classList.toggle('spent', !it || !it.ready || it.cool);
     btn.title = it ? Bonuses.BY_ID[it.id].name : 'No item equipped: tap an item in the bar';
   }
   function useItem() {
     const it = equippedItem();
     if (!it) return flashStatus('No item equipped: tap a yellow item in the bar');
+    if (it.cool) return;
     if (!it.ready) return flashStatus(`${Bonuses.BY_ID[it.id].name} recharges next room`);
-    if (it.id === 'wings' && me) me.flyT = Bonuses.WINGS_SECONDS; // predict the flight right away
+    if (it.id === 'wings' && me) me.flyT = Bonuses.BY_ID.wings.duration; // predict the flight right away
     socket.emit('use', { r: myRole });
     navigator.vibrate?.(15);
   }
@@ -741,12 +764,13 @@
   addEventListener('keydown', (e) => { if ((e.code === 'KeyE' || e.code === 'ShiftLeft') && !e.repeat && mode === 'challenge') useItem(); });
 
   // The map between rooms: team vote (rock paper scissors on a tie), then personal picks.
-  function card(id, { chosen, votes, onPick, rare }) {
+  function card(id, { chosen, votes, onPick }) {
     const b = Bonuses.BY_ID[id];
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = `card${rare ? ' rare' : ''}${chosen ? ' chosen' : ''}`;
-    el.innerHTML = `<span class="ic">${b.icon}</span><b>${escapeHtml(b.name)}</b><small>${escapeHtml(b.desc)}</small><div class="votes">${votes || ''}</div>`;
+    el.className = `card ${b.rarity}${chosen ? ' chosen' : ''}`;
+    const tag = b.rarity === 'common' ? '' : ` <span class="tier">${b.rarity}</span>`;
+    el.innerHTML = `<span class="ic">${b.icon}</span><b>${escapeHtml(b.name)}${tag}</b><small>${b.type === 'instant' ? '' : `<i>${b.scope === 'team' ? 'Team' : 'Personal'} · ${b.color === 'yellow' ? 'active' : 'passive'}</i><br>`}${escapeHtml(b.desc)}</small><div class="votes">${votes || ''}</div>`;
     if (onPick) el.addEventListener('click', onPick);
     return el;
   }
@@ -772,6 +796,7 @@
     const rare = m.rarity === 'rare';
     if (m.step === 'shared') {
       h('h2', rare ? '★ Boss reward: pick a team bonus' : 'Pick a team bonus');
+      if (!rare) h('p', m.uncommonChance > 0 ? `⭐ Stars collected: ${Math.round(m.uncommonChance * 100)}% chance of each offer being uncommon` : '⭐ Collect stars for a chance at uncommon bonuses', 'muted');
       h('p', myRoles.length > 1 ? 'You\'re playing both, so your choice decides.' : 'You both vote. If you disagree: rock, paper, scissors.', 'muted');
       const cards = h('div', '', 'cards');
       for (const id of m.shared.options) {
@@ -831,7 +856,7 @@
     const won = r.result === 'victory';
     view.innerHTML = `<div class="big">${won ? '🏆 Run complete!' : '☠ Out of hearts'}</div>
       <p class="muted">${won ? 'Both bosses beaten.' : `You reached ${r.stages[r.stage] === 'room' ? `room ${r.stage + 1}` : `boss ${r.stage === 4 ? 1 : 2}`} of ${r.stages.length}.`}
-      ${r.items.length + r.powers.fire.length + r.powers.water.length} bonuses collected.</p>`;
+      ${r.items.length + r.personal.fire.length + r.personal.water.length} items collected.</p>`;
     const again = document.createElement('button'); again.type = 'button'; again.textContent = 'New run';
     again.addEventListener('click', () => socket.emit('newrun'));
     const menu = document.createElement('button'); menu.type = 'button'; menu.textContent = 'Menu';
@@ -876,6 +901,8 @@
     }
     ctx.fillStyle = '#ffb02e';
     for (const s of r.shots) { ctx.beginPath(); ctx.arc(s.x + 5, s.y + 5, 5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#7ff3ff';
+    for (const b of r.bullets || []) ctx.fillRect(b.x, b.y, 8, 4);
     if (r.acid) {
       if (r.acid.burning) { // every walkable surface glows green
         ctx.fillStyle = 'rgba(95, 211, 90, 0.75)';
@@ -884,8 +911,8 @@
         }
       }
       const n = Math.ceil(r.acid.countdown);
-      // A jump keeps you up ~0.62 s and the burn lasts 0.5 s: jump in the last ~0.12 s.
-      const text = r.acid.burning ? 'ACID!' : r.acid.countdown > 0 && r.acid.countdown < 0.15 ? 'JUMP!' : n > 0 ? String(n) : '';
+      // A jump keeps you up ~0.62 s and the burn lasts 0.1 s: be in the air for it.
+      const text = r.acid.burning ? 'ACID!' : r.acid.countdown > 0 && r.acid.countdown < 0.5 ? 'JUMP!' : n > 0 ? String(n) : '';
       if (text) {
         ctx.font = 'bold 72px system-ui';
         ctx.textAlign = 'center';
@@ -919,6 +946,7 @@
     const predicting = me && playing() && localState;
     const world = predicting ? localState : Physics.cloneState(target);
     drawMechanisms(world);
+    drawGeysers(world, now);
     drawPulleys(world);
     drawBoxes(world);
     drawGems(target, now);

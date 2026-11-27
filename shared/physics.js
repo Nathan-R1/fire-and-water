@@ -160,6 +160,7 @@
       gates: level.gates.map((g) => g.invert), // inverted gates start open
       boxes: level.boxes.map(newBox),
       pulleys: level.pulleys.map(() => ({ o: 0 })),
+      geysers: [], // temporary updrafts (Challenge mode): { x, y, w, h, t }
     };
   }
 
@@ -172,6 +173,7 @@
       gates: s.gates.slice(),
       boxes: (s.boxes || []).map((b) => ({ x: b.x, y: b.y, w: BOX.size, h: BOX.size, vy: b.vy || 0, onGround: !!b.onGround })),
       pulleys: (s.pulleys || []).map((p) => ({ o: typeof p === 'number' ? p : p.o })),
+      geysers: (s.geysers || []).map((g) => ({ ...g })),
     };
   }
 
@@ -242,6 +244,10 @@
 
   const isBox = (b) => !!b.w;
 
+  function inGeyser(state, r) {
+    return !!(state && state.geysers && state.geysers.some((g) => overlaps(r, g)));
+  }
+
   // Move along one axis and snap against anything newly hit. Per-step movement is
   // always under one tile (maxFall * DT = 15px < 24px), so a single check is enough.
   // Obstacles already overlapping before the move are ignored so bodies can't get stuck.
@@ -283,6 +289,7 @@
   // `others` are the other characters; boxes and platforms come from `state`.
   function stepBody(level, body, input, others, dt = DT, state = null) {
     const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    if (dir) body.facing = dir;
     const cap = (body.pushing ? CHAR.pushSpeed : CHAR.maxSpeed) * (body.speedMul || 1);
     if (dir) {
       const accel = body.onGround ? CHAR.groundAccel : CHAR.airAccel;
@@ -310,7 +317,7 @@
     if (body.flyT > 0) {
       body.flyT = Math.max(0, body.flyT - dt);
       body.vy = approach(body.vy, -FLY.speed, FLY.accel * dt);
-    } else if (touchesTile(level, rectOf(body), T.FAN)) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
+    } else if (touchesTile(level, rectOf(body), T.FAN) || inGeyser(state, rectOf(body))) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
     else body.vy = Math.min(body.vy + CHAR.gravity * dt, CHAR.maxFall);
 
     const bodies = others.concat(state && state.boxes ? state.boxes : []);
@@ -417,6 +424,10 @@
   // Everything in the world except the characters' own movement, once per tick:
   // switches, pulleys (which carry riders), and falling boxes.
   function stepEnv(level, state, chars, dt = DT) {
+    if (state.geysers && state.geysers.length) {
+      for (const g of state.geysers) g.t -= dt;
+      state.geysers = state.geysers.filter((g) => g.t > 0);
+    }
     updateMechanisms(level, state, chars);
     stepPulleys(level, state, chars, dt);
     stepBoxes(level, state, chars, dt);

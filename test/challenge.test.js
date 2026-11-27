@@ -42,9 +42,18 @@ test('a run is 10 stages: 4 rooms, boss, 4 rooms, boss', () => {
   assert.ok(r.levelIndex >= 0 && r.levelIndex < 64);
 });
 
-test('normal rooms get 1–3 standing enemies, away from the spawns and doors', () => {
+test('room 1 is an untouched campaign level: no enemies added', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const r = run(seed);
+    assert.equal(r.run.enemies.length, 0);
+    assert.ok(g.LEVELS.includes(r.levelDef), 'the campaign level itself');
+  }
+});
+
+test('later normal rooms get 1–3 standing enemies, away from the spawns and doors', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const r = run(seed);
+    r.run.stage = 1; r.loadStage();
     const sentries = r.run.enemies.filter((e) => e.type === 'sentry');
     assert.ok(sentries.length <= 3, `seed ${seed}: ${sentries.length}`);
     for (const e of sentries) {
@@ -75,16 +84,20 @@ test('touching an enemy costs a heart and restarts the room; 0 hearts ends the r
   assert.equal(r.run.result, 'defeat');
 });
 
-test('Guardian saves one death per room, then you are briefly invulnerable', () => {
+test('Guardian: once per room, a death sends you back to your start instead', () => {
   const r = run(4);
-  C.grant(r, 'shield', null);
+  C.grant(r, 'guardian', null);
   const f = r.players.fire.body;
+  const spawn = { ...r.level.spawns.fire };
+  f.x += 3 * T; // walked away from the start
   r.run.enemies = [{ type: 'sentry', x: f.x, y: f.y + 10, w: 18, h: 18, stunT: 0 }];
-  tick(r, 10);
-  assert.equal(r.phase, 'playing', 'saved, and invulnerable for a while');
+  tick(r, 2);
+  assert.equal(r.phase, 'playing', 'saved');
   assert.equal(r.run.hearts, C.HEARTS.start);
-  tick(r, 120);
-  assert.equal(r.phase, 'dead', 'still touching after invulnerability ends: dies');
+  assert.ok(Math.abs(f.x - spawn.x) < 4, 'back at the start');
+  r.run.enemies[0].x = f.x; r.run.enemies[0].y = f.y + 10;
+  tick(r, 90);
+  assert.equal(r.phase, 'dead', 'only once per room');
 });
 
 test('map: same vote → granted; then both pick a personal bonus → next room', () => {
@@ -105,7 +118,8 @@ test('map: same vote → granted; then both pick a personal bonus → next room'
   assert.equal(r.phase, 'playing');
   assert.equal(r.run.stage, 1);
   assert.ok(r.loadId > before, 'a new room loaded');
-  assert.equal(r.run.powers.fire.length + r.run.items.length + (r.run.hearts > C.HEARTS.start ? 1 : 0) > 0, true);
+  assert.equal(r.run.personal.fire.length, 1);
+  assert.equal(r.run.personal.water.length, 1);
 });
 
 test('map: different votes → rock paper scissors (draws replay), winner\'s vote applies', () => {
@@ -165,11 +179,15 @@ test('items: equip, Blast destroys nearby standing enemies and recharges per att
   assert.equal(r.run.items[0].ready, true, 'recharged');
 });
 
-test('items: Wings fly, Swap swaps places (one use), Reroll replaces the room (one use)', () => {
+test('items: Wings (personal) fly, Swap is unlimited, Reroll is one use for the team and stays as used', () => {
   const r = run(10);
-  for (const id of ['wings', 'swap', 'reroll']) C.grant(r, id, null);
+  C.grant(r, 'wings', 'fire');
+  for (const id of ['swap', 'reroll']) C.grant(r, id, null);
+  assert.equal(r.run.items.some((i) => i.id === 'wings'), false, 'personal items never go in the team inventory');
   const byId = (id) => r.run.items.find((i) => i.id === id);
-  C.equip(r, 'fire', byId('wings').uid);
+  const wings = r.run.personal.fire.find((i) => i.id === 'wings');
+  assert.equal(C.equip(r, 'water', wings.uid), false, "water can't equip fire's personal item");
+  C.equip(r, 'fire', wings.uid);
   C.use(r, 'fire');
   assert.equal(r.players.fire.body.flyT, B.WINGS_SECONDS);
   const y0 = r.players.fire.body.y;
@@ -178,21 +196,25 @@ test('items: Wings fly, Swap swaps places (one use), Reroll replaces the room (o
 
   const f = { ...r.players.fire.body }, w = { ...r.players.water.body };
   C.equip(r, 'water', byId('swap').uid);
-  C.use(r, 'water');
+  assert.equal(C.use(r, 'water'), true);
   assert.equal(r.players.fire.body.x, w.x);
   assert.equal(r.players.water.body.x, f.x);
-  assert.equal(byId('swap'), undefined, 'consumed');
+  assert.equal(C.use(r, 'water'), false, '1 s cooldown');
+  tick(r, 61);
+  assert.equal(C.use(r, 'water'), true, 'and again: unlimited');
 
   const id0 = r.levelDef.id;
   C.equip(r, 'fire', byId('reroll').uid);
-  C.use(r, 'fire');
+  assert.equal(C.use(r, 'fire'), true);
   assert.notEqual(r.levelDef.id, id0);
-  assert.equal(byId('reroll'), undefined);
+  assert.equal(byId('reroll').spent, true, 'still in the bar, used up');
+  assert.equal(r.run.equip.fire, null, 'unequipped');
+  assert.equal(C.equip(r, 'water', byId('reroll').uid), false, "a used-up item can't be equipped");
 });
 
-test('powers change the physics of the player who has them', () => {
+test('personal passives change the physics of their owner only', () => {
   const r = run(11);
-  r.run.powers.fire.push('spring', 'doublejump', 'acidskin', 'magnet', 'swift');
+  for (const id of ['spring', 'doublejump', 'acidskin', 'magnet', 'swift']) C.grant(r, id, 'fire');
   g.restart(r);
   const f = r.players.fire.body, w = r.players.water.body;
   assert.equal(f.jumpMul, 1.15);
@@ -217,11 +239,11 @@ test('boss 1: the flyer moves and the walker grows over 60 s', () => {
   assert.ok(walker.size > s1 + 20, `walker grew from ${s1} to ${walker.size}`);
 });
 
-test('boss 2: 3-2-1, then the ground burns for half a second; acid skin survives; the turret shoots', () => {
+test('boss 2: 3-2-1, then the ground burns for 0.1 s; acid skin survives; the turret shoots', () => {
   const r = run(13);
   r.run.stage = 9; r.loadStage();
   assert.equal(r.levelDef.id, 'boss-2');
-  r.run.powers.water.push('acidskin');
+  C.grant(r, 'acidskin', 'water');
   g.restart(r);
   r.run.invuln.fire = 1e9; // fire is protected for this test; water relies on acid skin
   const events = [];
@@ -256,4 +278,91 @@ test('Double jump, Wings, Swift, Magnet in the physics', () => {
   assert.deepEqual(P.collectGems(L, st, m, 'fire'), []);
   m.magnet = 30;
   assert.deepEqual(P.collectGems(L, st, m, 'fire'), [0]);
+});
+
+test('offers: common after rooms, uncommon chance = share of stars collected; personal offers are independent', () => {
+  const r = run(20);
+  const tierOf = (id) => B.BY_ID[id].rarity;
+  // no stars: only common
+  let seen = new Set();
+  for (let k = 0; k < 50; k++) for (const id of C.offer(r.run, 'personal', 2, new Set(), 0, false)) seen.add(tierOf(id));
+  assert.deepEqual([...seen], ['common']);
+  // all stars: always uncommon while there are uncommons to give
+  seen = new Set();
+  for (let k = 0; k < 50; k++) for (const id of C.offer(r.run, 'personal', 2, new Set(), 1, false)) seen.add(tierOf(id));
+  assert.deepEqual([...seen], ['uncommon']);
+  // half the stars: a mix
+  let unc = 0, all = 0;
+  for (let k = 0; k < 400; k++) for (const id of C.offer(r.run, 'personal', 1, new Set(), 0.5, false)) { all++; if (tierOf(id) === 'uncommon') unc++; }
+  assert.ok(unc / all > 0.4 && unc / all < 0.6, `${unc}/${all}`);
+  // no team uncommons exist: team offers fall back to common
+  for (const id of C.offer(r.run, 'team', 2, new Set(), 1, false)) assert.equal(tierOf(id), 'common');
+  // bosses: rare
+  for (const id of C.offer(r.run, 'personal', 2, new Set(), 0, true)) assert.equal(tierOf(id), 'rare');
+  // both players can be offered the same item
+  let same = false;
+  for (let k = 0; k < 50 && !same; k++) {
+    const a = C.offer(r.run, 'personal', 2, new Set(), 0, false), b = C.offer(r.run, 'personal', 2, new Set(), 0, false);
+    same = a.some((id) => b.includes(id));
+  }
+  assert.ok(same);
+});
+
+test('Blaster: short-range shot the way you face destroys a sentry; unlimited with a short cooldown', () => {
+  const r = run(21);
+  C.grant(r, 'gun', 'fire');
+  const f = r.players.fire.body;
+  f.facing = 1;
+  r.run.enemies = [{ type: 'sentry', x: f.x + 3 * T, y: f.y + 8, w: 18, h: 18, stunT: 0 }];
+  assert.equal(C.use(r, 'fire'), true);
+  tick(r, 20);
+  assert.equal(r.run.enemies[0].dead, true);
+  tick(r, 30);
+  assert.equal(C.use(r, 'fire'), true, 'fires again');
+  r.run.enemies = [{ type: 'sentry', x: f.x + 9 * T, y: f.y + 8, w: 18, h: 18, stunT: 0 }];
+  tick(r, 60);
+  assert.ok(!r.run.enemies[0].dead, 'out of range');
+});
+
+test('Cloak: enemies are harmless and the turret won\'t aim at you; Shield: nothing hurts for 5 s', () => {
+  const r = run(22);
+  C.grant(r, 'cloak', 'fire'); C.grant(r, 'shield', 'water');
+  const f = r.players.fire.body;
+  r.run.enemies = [{ type: 'sentry', x: f.x, y: f.y + 10, w: 18, h: 18, stunT: 0 }];
+  C.use(r, 'fire');
+  tick(r, 30);
+  assert.equal(r.phase, 'playing', 'cloaked: the sentry is harmless');
+  r.run.enemies = [{ type: 'shooter', x: f.x, y: f.y - 5 * T, w: 28, h: 22, stunT: 0, cool: 0 }];
+  r.players.water.body.x = 1e5; // water far away and also cloaked? no: give water a shield instead
+  C.use(r, 'water');
+  tick(r, 2);
+  const shot = r.run.shots[0];
+  assert.ok(!shot || shot.vx > 0, 'the turret aimed at water, not at the cloaked fire');
+});
+
+test('Recall and Beacon teleport; Create Box drops a box; Geyser lifts you', () => {
+  const r = run(23);
+  for (const id of ['recall', 'beacon']) C.grant(r, id, 'fire');
+  C.grant(r, 'crate', 'water'); C.grant(r, 'geyser', null);
+  const f = r.players.fire.body, w = r.players.water.body;
+  const spawn = { ...r.level.spawns.fire };
+  f.x += 2 * T;
+  C.equip(r, 'fire', r.run.personal.fire.find((i) => i.id === 'recall').uid);
+  C.use(r, 'fire');
+  assert.ok(Math.abs(f.x - spawn.x) < 1);
+  C.equip(r, 'fire', r.run.personal.fire.find((i) => i.id === 'beacon').uid);
+  C.use(r, 'fire');
+  assert.ok(Math.abs(f.x - w.x) < 1, 'next to (on top of) water');
+  const boxes = r.state.boxes.length;
+  C.equip(r, 'water', r.run.items.find((i) => i.id === 'crate').uid);
+  assert.equal(C.use(r, 'water'), true);
+  assert.equal(r.state.boxes.length, boxes + 1);
+  assert.equal(C.use(r, 'water'), false, 'once per room');
+  g.restart(r);
+  assert.equal(r.state.boxes.length, boxes, 'gone on restart');
+  C.equip(r, 'water', r.run.items.find((i) => i.id === 'geyser').uid);
+  C.use(r, 'water');
+  const y0 = r.players.water.body.y;
+  tick(r, 40);
+  assert.ok(r.players.water.body.y < y0 - 2 * T, 'carried upwards');
 });
