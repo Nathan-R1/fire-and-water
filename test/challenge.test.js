@@ -696,3 +696,13 @@ test('the bomber flies along the highest open row, below any rock up top', () =>
   assert.ok(bomber.y >= 2 * T, `below the rock (y=${(bomber.y / T).toFixed(2)})`);
   assert.ok(bomber.x0 >= T && bomber.x1 <= 39 * T, 'within the room');
 });
+
+test('Leapfrog: the bomber patrols one section of the top of the room', () => {
+  const def = g.LEVELS.find((l) => l.id.startsWith('27'));
+  const L = P.parseLevel(def);
+  const b = C.enemySpecs({ stage: 6, rand: C.rng(1) }, 'room', L).find((e) => e.type === 'bomber');
+  assert.ok(b, 'has a bomber');
+  assert.ok(b.y < 2 * T, `up at the top (row ${(b.y / T).toFixed(1)})`);
+  const width = (b.x1 + b.w - b.x0) / T;
+  assert.ok(width >= 6 && width < 20, `covers one section (${width.toFixed(1)} tiles)`);
+});

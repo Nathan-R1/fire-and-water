@@ -139,10 +139,13 @@ function enemySpecs(run, kind, level) {
   return specs;
 }
 
-// The bomber flies along the highest row with an open stretch of at least 12 tiles
-// (nothing solid in that row), patrolling just that stretch.
+// The bomber flies along the highest row with an open stretch of at least 6 tiles
+// (nothing solid in that row), patrolling the longest such stretch in that row. Where
+// walls divide the top of a room (e.g. Leapfrog) it covers just one section. Only in
+// the top half of the room, so it never ends up at head height.
+const BOMBER_MIN_RUN = 6;
 function bomberLane(level) {
-  for (let ty = 1; ty < level.height - 4; ty++) {
+  for (let ty = 1; ty <= Math.floor(level.height / 2); ty++) {
     let best = null, start = null;
     for (let tx = 1; tx <= level.width - 1; tx++) {
       const open = tx < level.width - 1 && !P.isSolid(level, tx, ty);
@@ -152,7 +155,7 @@ function bomberLane(level) {
         start = null;
       }
     }
-    if (best && best.len >= 12) {
+    if (best && best.len >= BOMBER_MIN_RUN) {
       return { x0: best.tx0 * T, x1: (best.tx0 + best.len) * T - BOMBER.w, y: ty * T + (T - BOMBER.h) / 2 };
     }
   }

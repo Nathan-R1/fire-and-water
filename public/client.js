@@ -27,7 +27,7 @@
     // No room yet: show the menu and stop here (no connection until you pick one).
     document.body.classList.add('on-menu');
     $('menu').hidden = false;
-    for (const id of ['hud', 'stage', 'rotate', 'controls']) $(id).hidden = true;
+    for (const id of ['hud', 'stage', 'controls']) $(id).hidden = true;
     $('create').addEventListener('click', () => goToRoom(newCode()));
     $('challenge').addEventListener('click', () => goToRoom(newCode(), 'challenge'));
     $('joincode').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });

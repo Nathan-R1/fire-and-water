@@ -43,8 +43,6 @@ body {
   font: inherit;
 }
 
-#rotate { display: none; opacity: 0.7; }
-@media (orientation: portrait) and (max-width: 700px) { #rotate { display: block; } }
 
 #stage {
   flex: 1;
@@ -102,7 +100,6 @@ body {
 #hud { flex-wrap: wrap; row-gap: 4px; }
 #levelinfo { font-variant-numeric: tabular-nums; white-space: nowrap; }
 #levelname { opacity: 0.75; }
-#rotate { position: fixed; top: calc(env(safe-area-inset-top) + 72px); left: 0; right: 0; text-align: center; font-size: 14px; pointer-events: none; }
 
 #stage { position: relative; }
 
@@ -216,7 +213,7 @@ body.on-menu { touch-action: auto; }
 #settings[hidden] { display: none; }
 #settings button { text-align: left; padding: 10px 12px !important; min-height: 44px; }
 #settings button[hidden] { display: none; }
-#hud[hidden], #stage[hidden], #rotate[hidden] { display: none !important; }
+#hud[hidden], #stage[hidden] { display: none !important; }
 
 /* ════════ Challenge mode ════════ */
 .menu-challenge { width: 100%; background: #7a2d4f !important; }
