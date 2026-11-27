@@ -133,9 +133,30 @@ function enemySpecs(run, kind, level) {
   if (!specs.length) specs = sentrySpecs(run, spots, count); // no room for the chosen kind
   // Rooms 6–9: a bomber flies along the top and drops bombs on whoever it passes over.
   if (run.stage >= 5) {
-    specs.push({ type: 'bomber', x0: 1 * T, x1: level.pxWidth - T - BOMBER.w, y: 1.1 * T, w: BOMBER.w, h: BOMBER.h, speed: BOMBER.speed, x: run.rand() < 0.5 ? 1 * T : level.pxWidth - T - BOMBER.w });
+    const lane = bomberLane(level);
+    if (lane) specs.push({ type: 'bomber', ...lane, w: BOMBER.w, h: BOMBER.h, speed: BOMBER.speed, x: run.rand() < 0.5 ? lane.x0 : lane.x1 });
   }
   return specs;
+}
+
+// The bomber flies along the highest row with an open stretch of at least 12 tiles
+// (nothing solid in that row), patrolling just that stretch.
+function bomberLane(level) {
+  for (let ty = 1; ty < level.height - 4; ty++) {
+    let best = null, start = null;
+    for (let tx = 1; tx <= level.width - 1; tx++) {
+      const open = tx < level.width - 1 && !P.isSolid(level, tx, ty);
+      if (open && start === null) start = tx;
+      if (!open && start !== null) {
+        if (!best || tx - start > best.len) best = { tx0: start, len: tx - start };
+        start = null;
+      }
+    }
+    if (best && best.len >= 12) {
+      return { x0: best.tx0 * T, x1: (best.tx0 + best.len) * T - BOMBER.w, y: ty * T + (T - BOMBER.h) / 2 };
+    }
+  }
+  return null;
 }
 
 function sentrySpecs(run, spots, count) {
@@ -268,7 +289,7 @@ function updateEnemies(room, dt) {
       e.t -= dt;
       if (e.phase === 'hidden' && e.t <= 0) {
         // surface under a visible player who's standing on something
-        const targets = ROLES.filter((r) => !cloaked(r) && room.players[r].body.onGround);
+        const targets = ROLES.filter((r) => !cloaked(r) && onRealGround(room, room.players[r].body));
         if (!targets.length) { e.t = 0.5; continue; }
         const b = room.players[targets[Math.floor(run.rand() * targets.length)]].body;
         e.x = b.x + P.CHAR.width / 2 - e.w / 2;
@@ -300,17 +321,23 @@ function updateEnemies(room, dt) {
       }
     }
   }
-  // Enemy shots fly straight and stop at rock.
-  const inRock = (x, y) => P.tileAt(room.level, Math.floor(x / T), Math.floor(y / T)) === P.T.SOLID;
+  // Enemy shots and bombs stop at anything solid: rock, boxes, mimics, closed gates,
+  // pulley platforms. The check covers the whole distance moved, so a fast bomb can't
+  // skip through a thin platform.
+  const hitsSolid = (x0, y0, x1, y1, size) => blockedRects(room, {
+    x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0) + size, h: Math.abs(y1 - y0) + size,
+  }).length > 0;
   run.shots = run.shots.filter((sh) => {
     if (sh.g) sh.vy += sh.g * dt; // bombs fall
+    const x0 = sh.x, y0 = sh.y;
     sh.x += sh.vx * dt; sh.y += sh.vy * dt;
-    return !inRock(sh.x + SHOOTER.size / 2, sh.y + SHOOTER.size / 2) && sh.x > -50 && sh.x < room.level.pxWidth + 50 && sh.y < room.level.pxHeight + 50;
+    return !hitsSolid(x0, y0, sh.x, sh.y, SHOOTER.size) && sh.x > -50 && sh.x < room.level.pxWidth + 50 && sh.y < room.level.pxHeight + 50;
   });
   // Blaster shots: short range, destroy sentries, stun bosses.
   run.bullets = run.bullets.filter((b) => {
+    const bx0 = b.x;
     b.x += b.vx * dt; b.left -= Math.abs(b.vx * dt);
-    if (b.left <= 0 || inRock(b.x + GUN.size / 2, b.y + GUN.size / 2)) return false;
+    if (b.left <= 0 || hitsSolid(bx0, b.y, b.x, b.y, GUN.size)) return false;
     const br = { x: b.x, y: b.y, w: GUN.size, h: GUN.size };
     for (const e of run.enemies) {
       if (e.dead || !overlaps(br, liveRect(e))) continue;
@@ -370,6 +397,20 @@ function updateEnemies(room, dt) {
     for (const sh of run.shots) if (overlaps(cr, { x: sh.x, y: sh.y, w: SHOOTER.size, h: SHOOTER.size })) { hits.push({ role: r, cause: sh.kind === 'bomb' ? 'bomb' : 'shot' }); break; }
   }
   return hits;
+}
+
+// Standing on the level's own ground (rock or a pool), not on a box, mimic or platform.
+function onRealGround(room, b) {
+  if (!b.onGround) return false;
+  const feet = b.y + P.CHAR.height;
+  if (Math.abs(feet - Math.round(feet / T) * T) > 0.5) return false; // platforms sit off the grid
+  const ty = Math.round(feet / T);
+  const under = { x: b.x, y: feet, w: P.CHAR.width, h: 2 };
+  if (room.state.boxes.concat(room.state.blocks || []).some((o) => overlaps(under, o))) return false;
+  if (P.platformRects(room.level, room.state).some((o) => overlaps(under, o))) return false;
+  const tx0 = Math.floor((b.x + 4) / T), tx1 = Math.floor((b.x + P.CHAR.width - 4) / T);
+  for (let tx = tx0; tx <= tx1; tx++) if (P.isSolid(room.level, tx, ty)) return true;
+  return false;
 }
 
 // Walkers turn around instead of walking into boxes, mimics, closed gates, pulley

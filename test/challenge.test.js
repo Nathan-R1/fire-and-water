@@ -35,6 +35,13 @@ function finishRoom(r) {
   for (let i = 0; i < g.TICKS.exitHold + g.TICKS.completePause + 5 && r.phase !== 'map' && r.phase !== 'over'; i++) g.step(r);
 }
 
+// A small test arena for enemy behaviour.
+function arena(r, rows) {
+  const def = { id: 'arena', name: 'arena', rows };
+  r.levelDef = def; r.level = P.parseLevel(def); r.state = P.createLevelState(r.level);
+  for (const role of g.ROLES) r.players[role].body = P.createBody(r.level.spawns[role]);
+}
+
 test('a run is 10 stages: 4 rooms, boss, 4 rooms, boss', () => {
   assert.deepEqual(C.STAGES, ['room', 'room', 'room', 'room', 'boss1', 'room', 'room', 'room', 'room', 'boss2']);
   const r = run();
@@ -475,9 +482,10 @@ test('patrolling walkers pace between the ends of their route', () => {
 
 test('the bomber drops a bomb when it passes over a player (not a cloaked one); bombs fall and kill', () => {
   const r = run(42);
-  r.run.stage = 6; r.loadStage();
-  const bomber = r.run.enemies.find((e) => e.type === 'bomber');
-  r.run.enemies = [bomber];
+  arena(r, ['####################', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#F...............Wfw', '####################']);
+  r.enemySpecs = [{ type: 'bomber', x0: T, x1: 18 * T, y: 1 * T + 3, w: 30, h: 18, speed: 80, x: T }];
+  C.onAttempt(r);
+  const bomber = r.run.enemies[0];
   const f = r.players.fire.body;
   // park the bomber right above fire
   bomber.x = f.x + P.CHAR.width / 2 - bomber.w / 2; bomber.cool = 0; bomber.speed = 0;
@@ -495,12 +503,6 @@ test('the bomber drops a bomb when it passes over a player (not a cloaked one); 
   assert.ok(!r.run.shots.length || r.run.shots[0].y > y0 + 10, 'falling');
 });
 
-// A small test arena for enemy behaviour.
-function arena(r, rows) {
-  const def = { id: 'arena', name: 'arena', rows };
-  r.levelDef = def; r.level = P.parseLevel(def); r.state = P.createLevelState(r.level);
-  for (const role of g.ROLES) r.players[role].body = P.createBody(r.level.spawns[role]);
-}
 
 test('rooms 6–9: one ground enemy type (sentry, walker, burrower, mimic or charger) plus the bomber', () => {
   const seen = new Set();
@@ -631,4 +633,66 @@ test('walkers turn around at boxes (and can leave one pushed into them)', () => 
   const x0 = e.x;
   tick(r, 60);
   assert.notEqual(e.x, x0, 'still walking');
+});
+
+test('shots, bombs and Blaster shots stop at boxes, closed gates and platforms, not just rock', () => {
+  const r = run(61);
+  arena(r, ['####################', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#F...............Wfw', '####################']);
+  r.enemySpecs = []; C.onAttempt(r);
+  r.state.boxes.push({ x: 10 * T, y: 6 * T, w: T, h: T, vy: 0, onGround: true }); // on the floor
+  // a shot flying right at the box
+  r.run.shots.push({ x: 6 * T, y: 6 * T + 7, vx: 200, vy: 0 });
+  // a bomb falling onto the box
+  r.run.shots.push({ x: 10 * T + 7, y: 1 * T, vx: 0, vy: 40, g: 900, kind: 'bomb' });
+  // a Blaster shot at the box from the other side
+  r.run.bullets.push({ x: 15 * T, y: 6 * T + 8, vx: -480, left: 10 * T });
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  tick(r, 90);
+  assert.equal(r.run.shots.length, 0, 'shot and bomb stopped');
+  assert.equal(r.run.bullets.length, 0, 'Blaster shot stopped');
+});
+
+test('a fast-falling bomb cannot skip through a thin pulley platform', () => {
+  const r = run(62);
+  arena(r, ['####################', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#..................#', '#F...............Wfw', '####################']);
+  r.levelDef = { ...r.levelDef, objects: [{ type: 'pulley', a: [8, 9], b: [14, 9], w: 3, travel: 1 }] };
+  r.level = P.parseLevel(r.levelDef); r.state = P.createLevelState(r.level);
+  r.enemySpecs = []; C.onAttempt(r);
+  r.run.shots.push({ x: 9 * T, y: 1 * T, vx: 0, vy: 800, g: 900, kind: 'bomb' });
+  for (const role of g.ROLES) r.run.invuln[role] = 1e9;
+  let lowest = 0;
+  for (let i = 0; i < 60 && r.run.shots.length; i++) { tick(r); if (r.run.shots[0]) lowest = Math.max(lowest, r.run.shots[0].y); }
+  assert.equal(r.run.shots.length, 0);
+  assert.ok(lowest < 9 * T + 12, `stopped at the platform (got to ${(lowest / T).toFixed(2)})`);
+});
+
+test('the burrower only surfaces under a player on real ground, not on a box', () => {
+  const r = run(63);
+  arena(r, ['##############', '#............#', '#............#', '#F.........Wfw', '##############']);
+  r.enemySpecs = [{ type: 'burrower', w: 30, h: 26 }];
+  C.onAttempt(r);
+  r.state.boxes.push({ x: 1 * T, y: 3 * T, w: T, h: T, vy: 0, onGround: true });
+  const f = r.players.fire.body;
+  Object.assign(f, { x: 1 * T + 2, y: 3 * T - P.CHAR.height - 1 }); // fire on the box
+  r.run.cloak = null; r.run.effects.water.cloakT = 1e9; // water hidden: only fire is a target
+  const e = r.run.enemies[0];
+  tick(r, 60 * 6);
+  assert.equal(e.phase, 'hidden', 'waits while fire is on the box');
+  Object.assign(f, { x: 4 * T, y: 4 * T - P.CHAR.height - 1 }); // fire steps down onto the floor
+  r.run.invuln.fire = 1e9;
+  tick(r, 40);
+  assert.equal(e.phase, 'warning', 'surfaces now');
+});
+
+test('the bomber flies along the highest open row, below any rock up top', () => {
+  const lvl = { id: 'b', name: 'b', rows: ['########################################', '########################################', '###################.....................', '#......................................#'] };
+  for (let i = 0; i < 18; i++) lvl.rows.push('#......................................#');
+  lvl.rows.push('#F...............................Wfw..#', '########################################');
+  lvl.rows = lvl.rows.map((x) => x.slice(0, 40).padEnd(40, '#'));
+  const L = P.parseLevel(lvl);
+  const specs = C.enemySpecs({ stage: 6, rand: C.rng(1) }, 'room', L);
+  const bomber = specs.find((e) => e.type === 'bomber');
+  assert.ok(bomber, 'has a bomber');
+  assert.ok(bomber.y >= 2 * T, `below the rock (y=${(bomber.y / T).toFixed(2)})`);
+  assert.ok(bomber.x0 >= T && bomber.x1 <= 39 * T, 'within the room');
 });
