@@ -46,10 +46,36 @@
 
   // Settings dropdown: restart, fullscreen, share.
   const settings = $('settings');
+  // Open below the ⚙ button, right-aligned to it, but always fully on screen: slide
+  // sideways to fit, open upwards if there's no room below, and scroll if it's still
+  // taller than the space available.
+  const MARGIN = 8;
+  function placeSettings() {
+    const b = $('settingsbtn').getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    settings.style.maxHeight = '';
+    settings.style.left = '0px'; settings.style.top = '0px';
+    const m = settings.getBoundingClientRect();
+    const left = Math.max(MARGIN, Math.min(b.right - m.width, vw - m.width - MARGIN));
+    const below = vh - b.bottom - MARGIN - 6, above = b.top - MARGIN - 6;
+    let top;
+    if (m.height <= below || below >= above) {
+      top = b.bottom + 6;
+      settings.style.maxHeight = `${Math.max(80, below)}px`;
+    } else {
+      const h = Math.min(m.height, above);
+      top = b.top - 6 - h;
+      settings.style.maxHeight = `${Math.max(80, above)}px`;
+    }
+    settings.style.left = `${left}px`;
+    settings.style.top = `${Math.max(MARGIN, top)}px`;
+  }
   const setSettings = (open) => {
     settings.hidden = !open;
     $('settingsbtn').setAttribute('aria-expanded', String(open));
+    if (open) placeSettings();
   };
+  addEventListener('resize', () => { if (!settings.hidden) placeSettings(); });
   $('settingsbtn').addEventListener('click', (e) => { e.stopPropagation(); setSettings(settings.hidden); });
   document.addEventListener('pointerdown', (e) => {
     if (!settings.hidden && !e.target.closest('.settings-wrap')) setSettings(false);
