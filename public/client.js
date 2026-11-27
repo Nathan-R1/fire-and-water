@@ -884,7 +884,8 @@
         }
       }
       const n = Math.ceil(r.acid.countdown);
-      const text = r.acid.burning ? 'ACID!' : n > 0 ? String(n) : '';
+      // A jump keeps you up ~0.62 s and the burn lasts 0.5 s: jump in the last ~0.12 s.
+      const text = r.acid.burning ? 'ACID!' : r.acid.countdown > 0 && r.acid.countdown < 0.15 ? 'JUMP!' : n > 0 ? String(n) : '';
       if (text) {
         ctx.font = 'bold 72px system-ui';
         ctx.textAlign = 'center';
