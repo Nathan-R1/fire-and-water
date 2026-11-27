@@ -296,26 +296,33 @@ body.on-menu { touch-action: auto; }
   text-align: center;
 }
 #mapview[hidden], #over[hidden] { display: none; }
-.track { display: flex; justify-content: center; align-items: center; gap: 4px; margin: 4px 0 14px; flex-wrap: wrap; }
-.node { width: 22px; height: 22px; border-radius: 50%; background: #2a2640; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+/* Everything on the drops screen is sized from --s, which fitMap() in client.js
+   shrinks until the whole screen fits vertically. */
+#mapview { --s: 1; padding: calc(14px * var(--s)) 16px; }
+#mapview h2 { font-size: calc(21px * var(--s)); margin: calc(8px * var(--s)) 0; }
+#mapview .muted { font-size: calc(14px * var(--s)); margin: calc(6px * var(--s)) 0; }
+.track { display: flex; justify-content: center; align-items: center; gap: 4px; margin: calc(4px * var(--s)) 0 calc(14px * var(--s)); flex-wrap: wrap; }
+.node { width: calc(22px * var(--s)); height: calc(22px * var(--s)); border-radius: 50%; background: #2a2640; font-size: calc(12px * var(--s)); display: flex; align-items: center; justify-content: center; }
 .node.done { background: #4a4470; }
 .node.here { outline: 2px solid #ffd84a; }
-.node.boss { width: 28px; height: 28px; background: #5a2340; }
+.node.boss { width: calc(28px * var(--s)); height: calc(28px * var(--s)); background: #5a2340; }
 .link { width: 10px; height: 2px; background: #3a3552; }
-.cards { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 8px 0 14px; }
+.cards { display: flex; gap: calc(10px * var(--s)); justify-content: center; flex-wrap: wrap; margin: calc(8px * var(--s)) 0 calc(14px * var(--s)); }
 .card {
-  width: 150px;
-  padding: 10px;
+  width: calc(150px * var(--s, 1));
+  padding: calc(10px * var(--s, 1));
   border-radius: 10px;
   border: 2px solid #3a3552;
   background: #1e1b2e;
   color: #eee;
   font: inherit;
+  font-size: calc(15px * var(--s, 1));
   text-align: left;
 }
+.card svg { width: calc(24px * var(--s, 1)); height: calc(24px * var(--s, 1)); }
 .card.uncommon { border-color: #4da6ff; }
 .card.rare { border-color: #b77dff; }
-.card .tier { font-size: 11px; font-weight: normal; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.05em; }
+.card .tier { font-size: calc(11px * var(--s, 1)); font-weight: normal; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.05em; }
 .card small i { opacity: 0.85; }
 .chip.gone { border-style: dashed; }
 .chip.mate { font-size: 18px; border-color: #3a3552; }
@@ -323,11 +330,11 @@ body.on-menu { touch-action: auto; }
 .chip .count { position: absolute; left: -4px; top: -6px; font-size: 11px; font-weight: bold; line-height: 1; padding: 1px 3px; border-radius: 6px; background: #14121f; color: #eee; }
 .card.chosen { outline: 3px solid #ffd84a; }
 .card .ic { color: #ffd84a; }
-.card b { display: block; margin: 4px 0; }
-.card small { opacity: 0.75; line-height: 1.35; display: block; }
-.card .votes { margin-top: 6px; min-height: 18px; }
-.hands { display: flex; gap: 10px; justify-content: center; margin: 10px 0; }
-.hands button { font-size: 32px; width: 72px; height: 72px; border-radius: 50%; border: 0; background: #2a2640; }
+.card b { display: block; margin: calc(4px * var(--s, 1)) 0; }
+.card small { opacity: 0.75; line-height: 1.35; display: block; font-size: calc(13px * var(--s, 1)); }
+.card .votes { margin-top: calc(6px * var(--s, 1)); min-height: calc(18px * var(--s, 1)); }
+.hands { display: flex; gap: calc(10px * var(--s, 1)); justify-content: center; margin: calc(10px * var(--s, 1)) 0; }
+.hands button { font-size: calc(32px * var(--s, 1)); width: calc(72px * var(--s, 1)); height: calc(72px * var(--s, 1)); border-radius: 50%; border: 0; background: #2a2640; }
 .hands button.chosen { outline: 3px solid #ffd84a; }
 .muted { opacity: 0.65; font-size: 14px; }
 #over .big { font-size: 28px; margin: 18px 0 6px; }

@@ -944,8 +944,22 @@
       const waiting = ['fire', 'water'].filter((role) => !m.personal.picks[role] && !mine.includes(role));
       if (waiting.length) h('p', `Waiting for ${waiting.map(roleIcon).join(' ')}…`, 'muted');
     }
+    fitMap();
   }
   const HAND = { rock: '✊', paper: '✋', scissors: '✌️' };
+
+  // Shrink the drops screen until it fits vertically (no scrolling), down to 45%.
+  function fitMap() {
+    const view = $('mapview');
+    if (view.hidden) return;
+    let s = 1;
+    view.style.setProperty('--s', s);
+    while (view.scrollHeight > view.clientHeight + 1 && s > 0.45) {
+      s = Math.round((s - 0.05) * 100) / 100;
+      view.style.setProperty('--s', s);
+    }
+  }
+  addEventListener('resize', fitMap);
 
   function renderOver(r, phase) {
     const view = $('over');
