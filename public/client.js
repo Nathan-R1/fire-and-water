@@ -990,6 +990,15 @@
     drawBoxes(world);
     drawGems(target, now);
     if (target.run) drawEnemies(target.run, now);
+    if (target.run && !target.run.started && target.phase === 'playing') {
+      ctx.font = 'bold 26px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.35 * Math.sin(now / 300)})`;
+      ctx.fillText('Move to start', level.pxWidth / 2, TILE * 2.2);
+      ctx.font = '15px system-ui';
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText('enemies and the clock wait for you', level.pxWidth / 2, TILE * 3.1);
+    }
     for (const role of ['fire', 'water']) {
       const pos = role === myRole && me && playing()
         ? { x: me.x + errX, y: me.y + errY }

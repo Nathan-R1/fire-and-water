@@ -292,6 +292,7 @@ function bodyMods(run, role) {
 // Called at the start of every attempt (room load, restart, after a death).
 function onAttempt(room) {
   const run = room.run;
+  run.started = false; // enemies and the clock wait until someone moves (see game.js)
   run.shieldUsed = false;
   run.invuln = { fire: 0, water: 0 };
   run.effects = { fire: { cloakT: 0, shieldT: 0 }, water: { cloakT: 0, shieldT: 0 } };
@@ -502,6 +503,7 @@ function use(room, role) {
   const run = room.run;
   if (room.phase !== 'playing' || !ROLES.includes(role)) return false;
   const it = findEquippable(run, role, run.equip[role]);
+  if (it) run.started = true; // using an item starts the room too
   if (!it) return false;
   const b = B.BY_ID[it.id];
   if (it.spent || !it.ready || it.coolT > 0) return false;
@@ -575,6 +577,7 @@ function view(room) {
   return {
     stage: run.stage,
     stages: STAGES,
+    started: !!run.started,
     hearts: run.hearts,
     maxHearts: run.maxHearts,
     items: run.items.map(item),

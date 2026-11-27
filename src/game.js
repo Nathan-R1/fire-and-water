@@ -200,7 +200,9 @@ function step(room) {
     return;
   }
 
-  room.tick++;
+  // Challenge: each attempt waits for someone to move before enemies and the clock start.
+  const waiting = room.mode === 'challenge' && !room.run.started;
+  if (!waiting) room.tick++;
   const bodies = ROLES.map((r) => room.players[r].body);
   P.stepEnv(room.level, room.state, bodies);
   for (const [role, inp] of nextSteps(room)) {
@@ -209,11 +211,12 @@ function step(room) {
       p.ack = inp.s;
       p.input = { left: inp.d === -1, right: inp.d === 1 };
       if (inp.j) P.pressJump(p.body);
+      if (waiting && (inp.d !== 0 || inp.j)) room.run.started = true;
     }
     P.stepBody(room.level, p.body, p.input, bodies.filter((b) => b !== p.body), P.DT, room.state);
   }
 
-  const hits = room.mode === 'challenge' ? C.updateEnemies(room, P.DT) : [];
+  const hits = room.mode === 'challenge' && room.run.started ? C.updateEnemies(room, P.DT) : [];
   for (const role of ROLES) {
     const body = room.players[role].body;
     const killer = P.hazardUnder(room.level, body, role) || (hits.find((h) => h.role === role) || {}).cause;

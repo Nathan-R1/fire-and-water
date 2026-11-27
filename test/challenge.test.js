@@ -16,8 +16,10 @@ function run(seed = 1, { both = false } = {}) {
 }
 // Step the room, feeding both players idle inputs (the server waits for inputs otherwise).
 let seq = 0;
+// (It also marks the room as started, as if someone had moved: enemies run.)
 const tick = (r, n = 1) => {
   for (let i = 0; i < n; i++) {
+    if (r.run) r.run.started = true;
     seq++;
     for (const role of g.ROLES) g.queueInput(r, role, { s: seq, d: 0, j: false });
     g.step(r);
@@ -249,6 +251,7 @@ test('boss 2: 3-2-1, then the ground burns for 0.1 s; acid skin survives; the tu
   const events = [];
   let sawShot = false, waterAlive = true;
   for (let i = 0; i < 60 * 9; i++) {
+    r.run.started = true; // as if someone had moved
     g.step(r);
     events.push(...g.takeEvents(r).map((e) => e.type));
     if (r.run.shots.length) sawShot = true;
@@ -415,4 +418,23 @@ test('Element Ward: stepping into your own element shields you, 1 s per copy, ea
   assert.equal(r.run.effects.fire.shieldT, 0, 'only on stepping in, not while standing there');
   f.x = 1 * T + 2; tick(r, 2); f.x = 3 * T + 2; tick(r, 2);
   assert.ok(r.run.effects.fire.shieldT > 1.9, 'again when stepping back in');
+});
+
+test('each attempt waits: enemies and the clock start when someone moves', () => {
+  const r = run(40);
+  r.run.stage = 4; r.loadStage(); // boss 1: things that move
+  const flyer = r.run.enemies.find((e) => e.type === 'flyer');
+  const x0 = flyer.x;
+  let s2 = 1000;
+  const idle = (n) => { for (let i = 0; i < n; i++) { s2++; for (const role of g.ROLES) g.queueInput(r, role, { s: s2, d: 0, j: false }); g.step(r); } };
+  idle(120);
+  assert.equal(flyer.x, x0, 'enemies wait');
+  assert.equal(r.tick, 0, 'the clock waits');
+  assert.equal(g.snapshot(r).run.started, false);
+  s2++; g.queueInput(r, 'water', { s: s2, d: 1, j: false }); g.queueInput(r, 'fire', { s: s2, d: 0, j: false }); g.step(r);
+  idle(30);
+  assert.notEqual(flyer.x, x0, 'moving started the fight');
+  assert.ok(r.tick > 0);
+  g.restart(r);
+  assert.equal(r.run.started, false, 'and it waits again after a restart');
 });
