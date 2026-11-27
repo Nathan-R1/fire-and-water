@@ -421,8 +421,9 @@
     for (const role of ['fire', 'water']) {
       const e = level.exits[role];
       const x = e.tx * TILE, y = e.ty * TILE - TILE;
+      const d = Physics.doorRect(level, role); // the same rect that counts for reaching the exit
       g.fillStyle = '#2a2640';
-      g.fillRect(x - 2, y - 2, TILE + 4, TILE * 2 + 2);
+      g.fillRect(d.x, d.y, d.w, d.h);
       g.fillStyle = role === 'fire' ? '#7a2a12' : '#123f7a';
       g.fillRect(x + 1, y + 1, TILE - 2, TILE * 2 - 1);
       g.fillStyle = COLORS[role];

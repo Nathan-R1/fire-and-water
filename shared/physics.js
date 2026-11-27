@@ -432,12 +432,16 @@
     return got;
   }
 
-  // Standing in the doorway: centre inside the door cell and feet on its floor.
-  function atExit(level, body, element) {
+  // The door as drawn: two tiles tall (the exit cell and the one above) plus a 2px frame.
+  function doorRect(level, element) {
     const e = level.exits[element];
-    const cx = body.x + CHAR.width / 2;
-    const feet = body.y + CHAR.height;
-    return body.onGround && cx >= e.tx * TILE && cx <= (e.tx + 1) * TILE && Math.abs(feet - (e.ty + 1) * TILE) < 1;
+    return { x: e.tx * TILE - 2, y: (e.ty - 1) * TILE - 2, w: TILE + 4, h: TILE * 2 + 2 };
+  }
+
+  // Any part of the character touching any part of its door counts (edges included).
+  function atExit(level, body, element) {
+    const r = rectOf(body), d = doorRect(level, element);
+    return r.x <= d.x + d.w && r.x + r.w >= d.x && r.y <= d.y + d.h && r.y + r.h >= d.y;
   }
 
   // One full tick: environment, then every character in a fixed order (each treats
@@ -450,6 +454,6 @@
   return {
     TILE, DT, CHAR, FAN, BOX, PULLEY, T,
     parseLevel, tileAt, isSolid, isDeadly, createLevelState, cloneState, createBody, pressJump,
-    stepBody, stepWorld, stepEnv, updateMechanisms, platformRects, hazardUnder, collectGems, atExit,
+    stepBody, stepWorld, stepEnv, updateMechanisms, platformRects, hazardUnder, collectGems, atExit, doorRect,
   };
 });

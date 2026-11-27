@@ -126,11 +126,16 @@ test('fans lift a character', () => {
   assert.ok(b.y < FLOOR(7) - 2 * P.TILE, `rose to ${b.y}`);
 });
 
-test('atExit needs the character standing in its door', () => {
-  const L = P.parseLevel({ id: 'e', rows: ['######', '#FWfw#', '######'] });
-  const b = P.createBody({ x: 3 * P.TILE + 2, y: FLOOR(2) - 1 });
-  assert.equal(P.atExit(L, b, 'fire'), false, 'not grounded yet');
-  for (let i = 0; i < 5; i++) P.stepBody(L, b, NONE, []);
-  assert.equal(P.atExit(L, b, 'fire'), true);
-  assert.equal(P.atExit(L, b, 'water'), false);
+test('atExit: any part of the character touching any part of its door counts', () => {
+  const L = P.parseLevel({ id: 'e', rows: ['########', '#......#', '#FW.f.w#', '########'] });
+  const T = P.TILE, W = P.CHAR.width, H = P.CHAR.height;
+  const d = P.doorRect(L, 'fire');
+  const at = (x, y) => P.atExit(L, { x, y }, 'fire');
+  assert.equal(at(4 * T + 2, 3 * T - H), true, 'standing in the doorway');
+  assert.equal(at(d.x - W, 3 * T - H), true, 'just touching the left edge');
+  assert.equal(at(d.x + d.w, 3 * T - H), true, 'just touching the right edge');
+  assert.equal(at(4 * T + 2, d.y - H), true, 'mid-air, touching the top of the door');
+  assert.equal(at(d.x - W - 1, 3 * T - H), false, 'one pixel away');
+  assert.equal(at(4 * T + 2, 3 * T - H), true);
+  assert.equal(P.atExit(L, { x: 4 * T + 2, y: 3 * T - H }, 'water'), false, "fire's door doesn't count for water");
 });
