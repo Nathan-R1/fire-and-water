@@ -126,7 +126,7 @@ Each milestone ends deployed and playable on two phones.
 |---|---|---|
 | **M0** | ✅ Shell | Two phones share a room and walk left and right |
 | **M1** | ✅ Platforming | Gravity, jumping, tile collision, a hand-written test level, Jump button, landscape layout, 60 Hz shared physics |
-| **M2** | Netcode feel | Prediction and reconciliation, interpolating the partner, and jumping feels instant at about 150ms ping |
+| **M2** | ✅ Netcode feel | Prediction and reconciliation, interpolating the partner, and jumping feels instant at about 150ms ping |
 | **M3** | ✅ Hazards and win | Lava, water and acid pools, death and restart for both, exits, level complete and results screen |
 | **M4** | 🟡 Puzzles (plates, levers, gates, fans, gems and timer done; boxes, moving platforms and rank to do) | Plates, levers, gates, moving platforms, boxes, gems, timer and rank |
 | **M5** | 🟡 Levels pipeline (32 draft levels in ASCII JSON with a reachability checker, played in order; Tiled, level select and replays to do) | Tiled to JSON with validation, 10 tutorial levels (**World 1**), level select with unlocks, replay-based checks that levels can be completed |

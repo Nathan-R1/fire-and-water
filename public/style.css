@@ -31,7 +31,8 @@ body {
   font-size: 14px;
 }
 
-.hud-right { display: flex; gap: 6px; }
+.hud-right { display: flex; gap: 6px; align-items: center; }
+#ping { opacity: 0.6; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 #hud button {
   background: #2a2640;

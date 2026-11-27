@@ -48,13 +48,13 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('input', (dir) => {
-    if (room && role) game.setInput(room.state, role, dir);
+  // One message per client tick: { s: seq, d: dir, j: jumpPressed }
+  socket.on('i', (msg) => {
+    if (room && role) game.queueInput(room.state, role, msg);
   });
 
-  socket.on('jump', () => {
-    if (room && role) game.jump(room.state, role);
-  });
+  // Latency probe for the ping readout.
+  socket.on('p', (cb) => { if (typeof cb === 'function') cb(); });
 
   socket.on('restart', () => {
     if (room && role) game.restart(room.state);

@@ -8,6 +8,14 @@ const P = require('../shared/physics');
 
 const ROLES = ['fire', 'water'];
 const TICKS = { exitHold: 30, deathPause: 60, completePause: 180 }; // at 60 Hz
+// Per-player input buffer. Clients send one input per 60 Hz tick and the server steps
+// each character once per input, so the client can predict its own character exactly.
+// If inputs arrive late the character waits (up to MAX_WAIT ticks) instead of moving on
+// a guess; after that it carries on with its last input (e.g. connection dropped).
+// When inputs pile up it applies two per tick to catch up.
+const MAX_WAIT = 8;
+const CATCH_UP_AT = 3;
+const MAX_QUEUE = 120;
 
 const LEVEL_DIR = path.join(__dirname, '..', 'levels');
 const LEVELS = fs.readdirSync(LEVEL_DIR)
@@ -23,7 +31,7 @@ function createRoom(code, { levels = LEVELS, startIndex = 0 } = {}) {
     players: {},
     events: [],
   };
-  for (const role of ROLES) room.players[role] = { socketId: null, input: { left: false, right: false }, body: null };
+  for (const role of ROLES) room.players[role] = newPlayer();
   loadLevel(room, room.levelIndex);
   return room;
 }
@@ -50,11 +58,19 @@ function resetAttempt(room) {
   }
 }
 
+function newPlayer() {
+  return { socketId: null, input: { left: false, right: false }, body: null, queue: [], lastSeq: 0, ack: 0, waited: 0 };
+}
+
 // Assign the first free role, or null if the room is full (spectator).
 function join(room, socketId) {
   for (const role of ROLES) {
     if (!room.players[role].socketId) {
-      room.players[role].socketId = socketId;
+      const p = room.players[role];
+      p.socketId = socketId;
+      p.queue = [];
+      p.lastSeq = 0;
+      p.ack = 0;
       return role;
     }
   }
@@ -67,6 +83,7 @@ function leave(room, socketId) {
     if (p.socketId === socketId) {
       p.socketId = null;
       p.input = { left: false, right: false };
+      p.queue = [];
     }
   }
 }
@@ -82,6 +99,47 @@ function setInput(room, role, dir) {
   room.players[role].input = { left: dir === -1, right: dir === 1 };
 }
 
+// Queue one tick of input from a client: { s: seq, d: -1|0|1, j: bool }.
+function queueInput(room, role, msg) {
+  if (!ROLES.includes(role) || !msg) return;
+  const p = room.players[role];
+  const { s, d } = msg;
+  if (!Number.isInteger(s) || s <= p.lastSeq) return;
+  if (d !== -1 && d !== 0 && d !== 1) return;
+  p.lastSeq = s;
+  p.queue.push({ s, d, j: msg.j === true });
+  if (p.queue.length > MAX_QUEUE) p.queue.shift();
+}
+
+// Inputs during pauses (death, level complete) are acknowledged and ignored.
+function discardInputs(room) {
+  for (const role of ROLES) {
+    const p = room.players[role];
+    if (p.queue.length) p.ack = p.queue[p.queue.length - 1].s;
+    p.queue = [];
+    p.waited = 0;
+  }
+}
+
+// How many physics steps each character takes this tick, applying queued inputs.
+// Returns a list of [role, input] per step. Players with no socket always step
+// (with no input) so a disconnected character still falls and settles.
+function nextSteps(room) {
+  const steps = [];
+  for (const role of ROLES) {
+    const p = room.players[role];
+    const n = p.queue.length > CATCH_UP_AT ? 2 : p.queue.length ? 1 : 0;
+    if (n === 0) {
+      if (p.socketId && ++p.waited <= MAX_WAIT) continue; // wait for the late input
+      steps.push([role, null]);
+      continue;
+    }
+    p.waited = 0;
+    for (let k = 0; k < n; k++) steps.push([role, p.queue.shift()]);
+  }
+  return steps;
+}
+
 function jump(room, role) {
   if (!ROLES.includes(role) || room.phase !== 'playing') return;
   P.pressJump(room.players[role].body);
@@ -95,6 +153,7 @@ function restart(room) {
 
 // Advance one fixed physics step.
 function step(room) {
+  if (room.phase !== 'playing') discardInputs(room);
   if (room.phase === 'dead') {
     if (++room.phaseTicks >= TICKS.deathPause) {
       resetAttempt(room);
@@ -111,7 +170,16 @@ function step(room) {
 
   room.tick++;
   const bodies = ROLES.map((r) => room.players[r].body);
-  P.stepWorld(room.level, bodies, ROLES.map((r) => room.players[r].input), P.DT, room.state);
+  P.updateMechanisms(room.level, room.state, bodies);
+  for (const [role, inp] of nextSteps(room)) {
+    const p = room.players[role];
+    if (inp) {
+      p.ack = inp.s;
+      p.input = { left: inp.d === -1, right: inp.d === 1 };
+      if (inp.j) P.pressJump(p.body);
+    }
+    P.stepBody(room.level, p.body, p.input, bodies.filter((b) => b !== p.body), P.DT, room.state);
+  }
 
   for (const role of ROLES) {
     const body = room.players[role].body;
@@ -146,12 +214,17 @@ function step(room) {
 function snapshot(room) {
   const chars = {};
   for (const role of ROLES) {
-    const { body, socketId } = room.players[role];
-    chars[role] = { x: body.x, y: body.y, vx: body.vx, vy: body.vy, onGround: body.onGround, connected: !!socketId };
+    const { body, socketId, ack } = room.players[role];
+    chars[role] = {
+      x: body.x, y: body.y, vx: body.vx, vy: body.vy,
+      onGround: body.onGround, coyoteT: body.coyoteT, bufferT: body.bufferT,
+      ack, connected: !!socketId,
+    };
   }
   return {
     ...chars,
     level: room.levelIndex,
+    tick: room.tick,
     phase: room.phase,
     timeMs: Math.round(room.tick * P.DT * 1000),
     gems: room.state.gems,
@@ -168,5 +241,5 @@ function takeEvents(room) {
 }
 
 module.exports = {
-  ROLES, TICKS, LEVELS, createRoom, loadLevel, join, leave, isEmpty, setInput, jump, restart, step, snapshot, takeEvents,
+  ROLES, TICKS, LEVELS, MAX_WAIT, createRoom, loadLevel, join, leave, isEmpty, setInput, queueInput, jump, restart, step, snapshot, takeEvents,
 };

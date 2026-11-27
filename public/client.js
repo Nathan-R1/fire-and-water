@@ -45,7 +45,13 @@
   let TILE = Physics.TILE;
   let myRole = null;
   let target = null;    // latest server snapshot
-  let shown = null;     // smoothed character positions we draw
+  let snaps = [];       // recent snapshots with arrival time, for interpolating others
+  // Prediction for your own character (see "Prediction" below)
+  let me = null;        // predicted body
+  let pending = [];     // inputs sent but not yet processed by the server
+  let seq = 0;
+  let jumpQueued = false;
+  let errX = 0, errY = 0; // visual offset left over from corrections, decays to 0
   let statusOverride = null;
 
   function setLevel(info) {
@@ -53,7 +59,9 @@
     levelIndex = info.index;
     levelTotal = info.total;
     target = null;
-    shown = null;
+    snaps = [];
+    me = null;
+    pending = [];
     $('levelnum').textContent = `${levelIndex + 1}/${levelTotal}`;
     $('levelname').textContent = level.name;
     resizeCanvas();
@@ -73,14 +81,16 @@
     setLevel(msg.level);
     $('controls').hidden = !myRole;
     $('restart').hidden = !myRole;
-    sentDir = 0;
     updateStatus();
   });
 
   socket.on('state', (s) => {
     if (!level || s.level !== levelIndex) return; // level change in flight
     target = s;
-    if (!shown) shown = { fire: { x: s.fire.x, y: s.fire.y }, water: { x: s.water.x, y: s.water.y } };
+    const t = performance.now();
+    snaps.push({ t, s });
+    while (snaps.length > 2 && snaps[1].t < t - 1000) snaps.shift();
+    if (myRole) reconcile(s);
     $('timer').textContent = formatTime(s.timeMs);
     const mine = (el) => level.gems.filter((g, i) => g.el === el && s.gems[i]).length;
     const total = (el) => level.gems.filter((g) => g.el === el).length;
@@ -97,7 +107,7 @@
       showBanner(`<b>Oops!</b>${who} fell in the ${CAUSE[e.cause] || 'hazard'}`, 1000);
       if (e.role === myRole) navigator.vibrate?.([40, 40, 80]);
     } else if (e.type === 'restart') {
-      shown = null;
+      me = null; errX = errY = 0;
     } else if (e.type === 'gem') {
       if (e.role === myRole) navigator.vibrate?.(15);
     } else if (e.type === 'complete') {
@@ -150,7 +160,6 @@
   const dpadKeys = [...dpad.querySelectorAll('.ctl')];
   const touchDirs = new Map(); // pointerId -> -1 | 1
   const keyDirs = new Set();   // keyboard, most recent last
-  let sentDir = 0;
 
   function dirFromPointer(e) {
     const r = dpad.getBoundingClientRect();
@@ -163,10 +172,10 @@
     return 0;
   }
 
+  // Only updates the button highlight; the direction is sampled every tick.
   function sendDir() {
     const dir = currentDir();
     for (const k of dpadKeys) k.classList.toggle('active', Number(k.dataset.dir) === dir && touchDirs.size > 0);
-    if (dir !== sentDir) { sentDir = dir; socket.emit('input', dir); }
   }
 
   dpad.addEventListener('pointerdown', (e) => {
@@ -188,7 +197,7 @@
   jumpBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     jumpBtn.classList.add('active');
-    socket.emit('jump');
+    jumpQueued = true;
     navigator.vibrate?.(10);
   });
   for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
@@ -203,7 +212,7 @@
     if (e.repeat) return;
     const d = keyDir[e.code];
     if (d) { keyDirs.delete(d); keyDirs.add(d); sendDir(); }
-    if (jumpKeys.has(e.code)) { e.preventDefault(); if (myRole) socket.emit('jump'); }
+    if (jumpKeys.has(e.code)) { e.preventDefault(); jumpQueued = true; }
     if (e.code === 'KeyR' && myRole) socket.emit('restart');
   });
   addEventListener('keyup', (e) => {
@@ -211,6 +220,79 @@
     if (d) { keyDirs.delete(d); sendDir(); }
   });
   addEventListener('blur', () => { keyDirs.clear(); touchDirs.clear(); sendDir(); });
+  // A hidden tab stops ticking, so tell the server to stop us rather than keep walking.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden || !myRole) return;
+    keyDirs.clear(); touchDirs.clear(); sendDir();
+    socket.emit('i', { s: ++seq, d: 0, j: false });
+    pending = [];
+  });
+
+  // ---- Prediction ----
+  // Every 1/60 s: sample input, send it, and apply it to your own character right away
+  // using the same physics as the server. When a snapshot arrives, start again from the
+  // server's position and re-apply the inputs it hasn't processed yet (reconcile).
+  const NONE = { left: false, right: false };
+  const toInput = (d) => (d < 0 ? { left: true, right: false } : d > 0 ? { left: false, right: true } : NONE);
+  const playing = () => target && target.phase === 'playing';
+
+  function partnerBody() {
+    const other = myRole === 'fire' ? 'water' : 'fire';
+    return target ? [target[other]] : [];
+  }
+
+  function predictStep(inp) {
+    if (inp.j) Physics.pressJump(me);
+    Physics.stepBody(level, me, toInput(inp.d), partnerBody(), Physics.DT, target);
+  }
+
+  function clientTick() {
+    if (!myRole || !level) return;
+    const inp = { s: ++seq, d: currentDir(), j: jumpQueued };
+    jumpQueued = false;
+    socket.emit('i', inp);
+    if (target && !playing()) return; // the server ignores inputs during pauses
+    // Keep it even before the first snapshot: reconcile() replays it on top of the
+    // server state once the server has a position for us.
+    pending.push(inp);
+    if (pending.length > 120) pending.shift(); // ~2 s without an ack: give up on old ones
+    if (me) predictStep(inp);
+  }
+
+  function reconcile(s) {
+    const srv = s[myRole];
+    const before = me && { x: me.x, y: me.y };
+    me = { x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT };
+    pending = pending.filter((p) => p.s > srv.ack);
+    if (s.phase === 'playing') for (const p of pending) predictStep(p);
+    if (before) {
+      // Hide small corrections by easing them out; snap on big ones (respawn, teleport).
+      const dx = before.x - me.x + errX, dy = before.y - me.y + errY;
+      if (Math.hypot(dx, dy) < 2 * TILE) { errX = dx; errY = dy; } else { errX = errY = 0; }
+    }
+  }
+
+  // Other characters are drawn ~100 ms in the past, blended between two snapshots.
+  const INTERP_MS = 100;
+  function interpolated(role, now) {
+    const t = now - INTERP_MS;
+    for (let i = snaps.length - 1; i > 0; i--) {
+      const a = snaps[i - 1], b = snaps[i];
+      if (a.t <= t && t <= b.t) {
+        if (a.s.level !== b.s.level) break;
+        const k = (t - a.t) / (b.t - a.t || 1);
+        return { x: a.s[role].x + (b.s[role].x - a.s[role].x) * k, y: a.s[role].y + (b.s[role].y - a.s[role].y) * k };
+      }
+    }
+    return { x: target[role].x, y: target[role].y };
+  }
+
+  // ---- Ping readout ----
+  setInterval(() => {
+    if (!socket.connected) return;
+    const t0 = performance.now();
+    socket.emit('p', () => { $('ping').textContent = `${Math.round(performance.now() - t0)}ms`; });
+  }, 2000);
 
   // ---- Rendering ----
   const COLORS = {
@@ -389,10 +471,15 @@
   }
 
   let lastFrame = performance.now();
+  let tickAcc = 0;
   function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min((now - lastFrame) / 1000, 0.1);
     lastFrame = now;
+    tickAcc += dt;
+    while (tickAcc >= Physics.DT) { clientTick(); tickAcc -= Physics.DT; }
+    const decay = Math.exp(-dt * 12);
+    errX *= decay; errY *= decay;
     if (!level || !staticLayer) return;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -403,15 +490,11 @@
     if (!target) return;
     drawMechanisms(target);
     drawGems(target, now);
-    if (!shown) return;
-
-    // Ease toward the server position to hide the 30 Hz steps.
-    // (M2 replaces this with prediction for your own character.)
-    const k = 1 - Math.exp(-dt * 25);
     for (const role of ['fire', 'water']) {
-      shown[role].x += (target[role].x - shown[role].x) * k;
-      shown[role].y += (target[role].y - shown[role].y) * k;
-      drawChar(role, shown[role], target[role], target);
+      const pos = role === myRole && me && playing()
+        ? { x: me.x + errX, y: me.y + errY }
+        : role === myRole ? { x: target[role].x, y: target[role].y } : interpolated(role, now);
+      drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx } : target[role], target);
     }
   }
   requestAnimationFrame(frame);
