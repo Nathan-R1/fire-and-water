@@ -884,6 +884,8 @@
     view.hidden = !(phase === 'map' && m);
     if (view.hidden) return;
     view.innerHTML = '';
+    // portrait + one device picking for both players: one column of cards, not 2 rows of 2
+    view.classList.toggle('stack', m.step === 'personal' && myRoles.length > 1 && innerHeight > innerWidth);
     const h = (tag, html, cls) => { const el = document.createElement(tag); el.innerHTML = html; if (cls) el.className = cls; view.append(el); return el; };
     // progress track
     const track = h('div', '', 'track');
@@ -959,7 +961,7 @@
     const groups = [...view.querySelectorAll('.cards')];
     // widest a card can be in each row while the row stays on one line
     const maxW = (g, s) => {
-      const n = g.children.length || 1;
+      const n = view.classList.contains('stack') ? 1 : g.children.length || 1; // stacked: one card per line
       return Math.max(CARD_MIN * s, (g.clientWidth - 10 * s * (n - 1)) / n);
     };
     const setWidth = (w, s) => { for (const g of groups) g.style.setProperty('--cw', `${Math.min(w, maxW(g, s))}px`); };
@@ -975,7 +977,7 @@
       setWidth(widest(), s); // stay full width while shrinking
     }
   }
-  addEventListener('resize', fitMap);
+  addEventListener('resize', () => { lastMap = ''; if (run) renderMap(run, target && target.phase); });
 
   function renderOver(r, phase) {
     const view = $('over');
