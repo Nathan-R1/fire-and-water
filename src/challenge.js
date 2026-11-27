@@ -9,8 +9,8 @@ const B = require('../shared/bonuses');
 const ROLES = ['fire', 'water'];
 const STAGES = ['room', 'room', 'room', 'room', 'boss1', 'room', 'room', 'room', 'room', 'boss2'];
 const HEARTS = { start: 5, max: 8 };
-const GUARDIAN_INVULN = 1;
-const LAST_CHANCE_SECONDS = 5;      // seconds of safety after Guardian sends you back to start
+const GUARDIAN_SECONDS = 1;          // Guardian: shielded after your first hit each room
+const LAST_CHANCE_SECONDS = 5;      // Last Chance: seconds to get back to the start
 // Boss 2's acid floor: a 3 s countdown, then all ground burns for 0.1 s. A jump keeps you
 // in the air ~0.62 s, so you have about half a second in which to jump.
 const ACID = { period: 9, countdown: 3, burn: 0.1, firstAt: 4 };
@@ -66,7 +66,7 @@ function createRun(seed = (Math.random() * 2 ** 32) >>> 0) {
     used: new Set(),                 // campaign levels already played this run
     map: null,                       // the between-rooms screen (votes and picks)
     result: null,                    // 'victory' | 'defeat'
-    shieldUsed: false,
+    guardUsed: { fire: false, water: false },
     invuln: { fire: 0, water: 0 },
     time: 0,                         // seconds into the current attempt (enemy clocks)
     enemies: [],
@@ -131,9 +131,9 @@ function enemySpecs(run, kind, level, def = {}) {
   if (run.stage === 0) return [];
   const count = run.stage < 4 ? 1 + Math.floor(run.rand() * 2) : 2 + Math.floor(run.rand() * 2);
   const spots = sentrySpots(level);
-  // Room 2 has sentries; rooms 3–4 sentries or patrolling walkers; rooms 6–9 one of
-  // sentries, walkers, burrowers, mimics or chargers. Never a mix of these.
-  const types = run.stage < 2 ? ['sentry'] : run.stage < 4 ? ['sentry', 'patrol'] : ['sentry', 'patrol', 'burrower', 'mimic', 'charger'];
+  // Room 2 has sentries or mimics; rooms 3–4 sentries, patrolling walkers or mimics;
+  // rooms 6–9 one of sentries, walkers, burrowers, mimics or chargers. Never a mix.
+  const types = run.stage < 2 ? ['sentry', 'mimic'] : run.stage < 4 ? ['sentry', 'patrol', 'mimic'] : ['sentry', 'patrol', 'burrower', 'mimic', 'charger'];
   const type = types[Math.floor(run.rand() * types.length)];
   let specs = [];
   if (type === 'patrol') specs = patrolSpecs(run, spots, count);
@@ -557,15 +557,15 @@ function liveRect(e) {
   return e.type === 'flyer' ? { x: e.x, y: e.yNow ?? e.y, w: e.w, h: e.h } : enemyRect(e);
 }
 
-// Something would kill `role`. Returns true if they're saved: Shield, the moment of
-// safety after Guardian, or Guardian itself (once per room: back to the start).
+// Something would kill `role`. Returns true if they're saved: already safe (shielded,
+// or Last Chance's intangibility), Guardian (each player's first hit in a room: 1s
+// shielded where they are), then Last Chance.
 function absorb(room, role) {
   const run = room.run;
   if (run.invuln[role] > 0 || run.effects[role].shieldT > 0 || run.ghost[role] > 0) return true;
-  if (!run.shieldUsed && run.items.some((i) => i.id === 'guardian')) {
-    run.shieldUsed = true;
-    run.invuln[role] = GUARDIAN_INVULN;
-    toStart(room, role);
+  if (!run.guardUsed[role] && run.items.some((i) => i.id === 'guardian')) {
+    run.guardUsed[role] = true;
+    run.effects[role].shieldT = Math.max(run.effects[role].shieldT, GUARDIAN_SECONDS);
     room.events.push({ type: 'guardian', role });
     return true;
   }
@@ -603,7 +603,7 @@ function bodyMods(run, role) {
 function onAttempt(room) {
   const run = room.run;
   run.started = false; // enemies and the clock wait until someone moves (see game.js)
-  run.shieldUsed = false;
+  run.guardUsed = { fire: false, water: false };
   run.invuln = { fire: 0, water: 0 };
   run.effects = { fire: { cloakT: 0, shieldT: 0 }, water: { cloakT: 0, shieldT: 0 } };
   run.inElement = { fire: false, water: false };
@@ -950,7 +950,7 @@ function view(room) {
     },
     result: run.result,
     invuln: run.invuln,
-    guardianReady: run.items.some((i) => i.id === 'guardian') && !run.shieldUsed,
+    guardianReady: ROLES.filter((r) => run.items.some((i) => i.id === 'guardian') && !run.guardUsed[r]),
     enemies: run.enemies.filter((e) => !e.dead).map((e) => {
       const r = liveRect(e);
       return {

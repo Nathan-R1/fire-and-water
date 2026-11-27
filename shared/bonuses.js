@@ -30,7 +30,7 @@
       desc: 'The team gets 2 hearts back.',
       icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 9v6M9 12h6"/>') },
     { id: 'guardian', type: 'item', scope: 'team', color: 'green', rarity: 'common', name: 'Guardian',
-      desc: 'Once per room, the first thing that would kill either of you sends them back to their starting spot instead.',
+      desc: 'Each room, the first time either of you takes damage you\'re shielded for 1 second instead: nothing can hurt you.',
       icon: svg('<path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/>') },
     { id: 'blast', type: 'item', scope: 'team', color: 'yellow', rarity: 'common', uses: 'combat', name: 'Blast',
       desc: 'Destroys enemies and shots close to you and stuns bosses for a moment. Once per room.',

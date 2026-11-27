@@ -93,20 +93,37 @@ test('touching an enemy costs a heart and restarts the room; 0 hearts ends the r
   assert.equal(r.run.result, 'defeat');
 });
 
-test('Guardian: once per room, a death sends you back to your start instead', () => {
+test('Guardian: each player\'s first hit in a room makes them shielded for 1s instead', () => {
   const r = run(4);
   C.grant(r, 'guardian', null);
   const f = r.players.fire.body;
-  const spawn = { ...r.level.spawns.fire };
-  f.x += 3 * T; // walked away from the start
-  r.run.enemies = [{ type: 'sentry', x: f.x, y: f.y + 10, w: 18, h: 18, stunT: 0 }];
+  f.x += 3 * T;
+  const x0 = f.x;
+  const sentry = { type: 'sentry', x: f.x, y: f.y + 10, w: 18, h: 18, stunT: 0 };
+  r.run.enemies = [sentry];
   tick(r, 2);
   assert.equal(r.phase, 'playing', 'saved');
   assert.equal(r.run.hearts, C.HEARTS.start);
-  assert.ok(Math.abs(f.x - spawn.x) < 4, 'back at the start');
-  r.run.enemies[0].x = f.x; r.run.enemies[0].y = f.y + 10;
-  tick(r, 90);
-  assert.equal(r.phase, 'dead', 'only once per room');
+  assert.ok(Math.abs(f.x - x0) < 4, 'stays where it happened');
+  assert.ok(r.run.effects.fire.shieldT > 0 && !f.phase, 'shielded, not intangible');
+  tick(r, 30);
+  assert.equal(r.phase, 'playing', 'still safe while shielded');
+  tick(r, 40); // the second ends; still standing on the sentry
+  assert.equal(r.phase, 'dead', 'only once per player per room');
+});
+
+test('Guardian then Last Chance: a second hit uses Last Chance', () => {
+  const r = run(4);
+  C.grant(r, 'guardian', null); C.grant(r, 'lastchance', null);
+  const f = r.players.fire.body;
+  f.x += 3 * T;
+  r.run.enemies = [{ type: 'sentry', x: f.x, y: f.y + 10, w: 18, h: 18, stunT: 0 }];
+  tick(r, 2);
+  assert.ok(r.run.effects.fire.shieldT > 0 && !(r.run.ghost.fire > 0), 'Guardian first');
+  tick(r, 70);
+  assert.equal(r.phase, 'playing');
+  assert.ok(r.run.ghost.fire > 0, 'then Last Chance');
+  assert.ok(f.phase, 'Last Chance keeps you intangible');
 });
 
 test('map: same vote → granted; then both pick a personal bonus → next room', () => {
@@ -446,14 +463,15 @@ test('each attempt waits: enemies and the clock start when someone moves', () =>
   assert.equal(r.run.started, false, 'and it waits again after a restart');
 });
 
-test('enemy mix: room 2 sentries; rooms 3+ sentries or patrolling walkers, never both; rooms 6–9 add a bomber', () => {
+test('enemy mix: room 2 sentries or mimics; rooms 3–4 add patrolling walkers, never mixed; rooms 6–9 add a bomber', () => {
   const kinds = { 1: new Set(), 2: new Set(), 6: new Set() };
   for (let seed = 1; seed <= 40; seed++) {
     for (const stage of [1, 2, 6]) {
       const r = run(seed);
       r.run.stage = stage; r.loadStage();
       const types = new Set(r.run.enemies.map((e) => e.type));
-      assert.ok(!(types.has('sentry') && types.has('patrol')), `stage ${stage}: both kinds`);
+      const ground = [...types].filter((t) => t !== 'bomber');
+      assert.ok(ground.length <= 1, `stage ${stage}: mixed ${ground}`);
       assert.equal(types.has('bomber'), stage >= 5, `stage ${stage}: bomber`);
       for (const t of types) kinds[stage].add(t);
       for (const e of r.run.enemies.filter((x) => x.type === 'patrol')) {
@@ -461,8 +479,8 @@ test('enemy mix: room 2 sentries; rooms 3+ sentries or patrolling walkers, never
       }
     }
   }
-  assert.deepEqual([...kinds[1]].sort(), ['sentry']);
-  assert.ok(kinds[2].has('sentry') && kinds[2].has('patrol'), [...kinds[2]].join(','));
+  assert.deepEqual([...kinds[1]].sort(), ['mimic', 'sentry']);
+  assert.deepEqual([...kinds[2]].sort(), ['mimic', 'patrol', 'sentry']);
   assert.ok(kinds[6].has('bomber'));
 });
 
@@ -514,10 +532,10 @@ test('rooms 6–9: one ground enemy type (sentry, walker, burrower, mimic or cha
     for (const t of ground) seen.add(t);
   }
   for (const t of ['sentry', 'patrol', 'burrower', 'mimic', 'charger']) assert.ok(seen.has(t), `never saw ${t}: ${[...seen]}`);
-  // rooms 3–4 never get the new ones
+  // rooms 3–4 never get burrowers, chargers or bombers
   for (let seed = 1; seed <= 30; seed++) {
     const r = run(seed); r.run.stage = 2; r.loadStage();
-    for (const e of r.run.enemies) assert.ok(['sentry', 'patrol'].includes(e.type), e.type);
+    for (const e of r.run.enemies) assert.ok(['sentry', 'patrol', 'mimic'].includes(e.type), e.type);
   }
 });
 

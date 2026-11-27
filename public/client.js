@@ -243,7 +243,7 @@
     } else if (e.type === 'gem') {
       if (e.role === myRole) navigator.vibrate?.(15);
     } else if (e.type === 'guardian') {
-      showBanner(`<b>🛡 Guardian!</b>${e.role === 'fire' ? '🔥 Fire' : '💧 Water'} was sent back to the start`, 1300);
+      showBanner(`<b>🛡 Guardian!</b>${e.role === 'fire' ? '🔥 Fire' : '💧 Water'} is shielded for 1s`, 1000);
     } else if (e.type === 'bonus') {
       const b = Bonuses.BY_ID[e.id];
       if (b) flashStatus(`+ ${b.name}${e.role ? ` (${e.role === 'fire' ? '🔥' : '💧'})` : ''}`);
