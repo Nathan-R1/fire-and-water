@@ -14,6 +14,15 @@ const LAST_CHANCE_SECONDS = 5;      // Last Chance: seconds to get back to the s
 // Boss 2's acid floor: a 3 s countdown, then all ground burns for 0.1 s. A jump keeps you
 // in the air ~0.62 s, so you have about half a second in which to jump.
 const ACID = { period: 9, countdown: 3, burn: 0.1, firstAt: 4 };
+// Weather (rooms 6–10): after 10–20 s, then again 10–20 s after each one ends, a 5 s
+// lead-in, then the strike. Drought: water must be in a water pool. Rainstorm: fire
+// must be under cover. Acid flood: the bottom of the room fills with acid (rise, 5 s,
+// drain); get above it. Times are in real seconds (Slow Time doesn't slow weather).
+const WEATHER = {
+  firstMin: 10, firstMax: 20, gapMin: 10, gapMax: 20, lead: 5,
+  drought: 0.5, rain: 1, rise: 1.5, hold: 5, drain: 1,
+  depth: 2, // the flood rises this many tiles above the lowest floor you can stand on
+};
 const GUN = { speed: 480, range: 5 * 24, size: 8 };
 const PATROL = { size: 20, speed: 45, minRun: 3 };          // walkers pacing along platforms
 const BOMBER = { w: 30, h: 18, speed: 80, cooldown: 1.2, gravity: 900, size: 10 };
@@ -273,6 +282,74 @@ function patrolSpecs(run, spots, count) {
   });
 }
 
+// ── Weather ──
+
+// Which weather a room can fairly have, from where each character can stand (the level
+// checker's coarse reachability): drought needs a water pool Water can stand in, rain
+// needs somewhere covered Fire can stand, and a flood needs somewhere above it for both.
+const weatherCache = new Map();
+function weatherOptions(def) {
+  const key = def.id + '|' + def.rows.join('');
+  if (weatherCache.has(key)) return weatherCache.get(key);
+  const level = P.parseLevel(def);
+  const { reach } = require('../tools/levelcheck').analyse(def);
+  const cells = (el) => [...reach[el]].map((k) => k.split(',').map(Number));
+  const drought = cells('water').some(([x, y]) => P.tileAt(level, x, y + 1) === P.T.WATER);
+  const covered = (x, y) => { for (let yy = 1; yy <= y - 2; yy++) if (P.isSolid(level, x, yy)) return true; return false; };
+  const rain = cells('fire').some(([x, y]) => covered(x, y));
+  const lowest = Math.max(...cells('fire').concat(cells('water')).map(([, y]) => y));
+  const top = lowest + 1 - WEATHER.depth; // flood surface, in tiles
+  const flood = ROLES.every((el) => cells(el).some(([, y]) => y + 1 <= top)) ? top * T : null;
+  const out = { drought, rain, flood };
+  weatherCache.set(key, out);
+  return out;
+}
+
+// Rolled once per room (rooms 6–10): none, drought, rainstorm or acid flood, equally
+// likely; a kind the room can't fairly have counts as none.
+function rollWeather(run, def) {
+  if (run.stage < 5) return null;
+  const kind = ['none', 'drought', 'rain', 'flood'][Math.floor(run.rand() * 4)];
+  const seed = Math.floor(run.rand() * 2 ** 31);
+  const opts = weatherOptions(def);
+  if (kind === 'none' || !opts[kind]) return null;
+  return { kind, floodY: opts.flood, rand: rng(seed) };
+}
+
+function resetWeather(room) {
+  const w = room.weatherDef;
+  if (!w) { room.run.weather = null; return; }
+  const gap = WEATHER.firstMin + w.rand() * (WEATHER.firstMax - WEATHER.firstMin);
+  room.run.weather = { kind: w.kind, floodY: w.floodY, state: 'idle', t: 0, dur: gap, level: room.level.pxHeight };
+}
+
+const covered = (room, b) => blockedRects(room, { x: b.x + P.CHAR.width / 2 - 4, y: T, w: 8, h: Math.max(0, b.y - T) }).length > 0;
+
+function updateWeather(room, dt, hits) {
+  const run = room.run, w = run.weather;
+  if (!w) return;
+  w.t += dt;
+  const bottom = room.level.pxHeight - T;
+  const next = (state, dur) => { w.state = state; w.t = 0; w.dur = dur; };
+  if (w.t >= w.dur) {
+    if (w.state === 'idle') { next('lead', WEATHER.lead); room.events.push({ type: 'weather', kind: w.kind }); }
+    else if (w.state === 'lead') next('strike', w.kind === 'flood' ? WEATHER.rise + WEATHER.hold + WEATHER.drain : WEATHER[w.kind]);
+    else next('idle', WEATHER.gapMin + room.weatherDef.rand() * (WEATHER.gapMax - WEATHER.gapMin));
+  }
+  w.level = room.level.pxHeight;
+  if (w.state !== 'strike') return;
+  if (w.kind === 'flood') {
+    const k = w.t < WEATHER.rise ? w.t / WEATHER.rise : w.t < WEATHER.rise + WEATHER.hold ? 1 : Math.max(0, (w.dur - w.t) / WEATHER.drain);
+    w.level = bottom - k * (bottom - w.floodY);
+  }
+  for (const r of ROLES) {
+    const b = room.players[r].body;
+    if (w.kind === 'drought' && r === 'water' && !onOwnPool(room.level, b, 'water')) hits.push({ role: r, cause: 'drought' });
+    if (w.kind === 'rain' && r === 'fire' && !covered(room, b)) hits.push({ role: r, cause: 'rain' });
+    if (w.kind === 'flood' && !b.acidImmune && b.y + P.CHAR.height > w.level + 2) hits.push({ role: r, cause: 'flood' });
+  }
+}
+
 // ── Enemies ──
 
 function resetEnemies(room) {
@@ -291,6 +368,7 @@ function resetEnemies(room) {
     }
   }
   if (room.enemySpecs.some((e) => e.type === 'acid')) run.acid = { next: ACID.firstAt, countdown: 0, burning: 0 };
+  resetWeather(room);
 }
 
 const shrink = (r, by) => ({ x: r.x + by, y: r.y + by, w: r.w - 2 * by, h: r.h - 2 * by });
@@ -437,6 +515,7 @@ function updateEnemies(room, dt) {
       }
     }
   }
+  updateWeather(room, playerDt, hits);
   stomps(room);
   // Touching an enemy (not while cloaked) or an enemy shot.
   for (const r of ROLES) {
@@ -689,6 +768,7 @@ function loadStage(room, load) {
   room.enemySpecs = [];
   load(def, { index: run.stage, total: STAGES.length, label });
   room.enemySpecs = enemySpecs(run, kind, room.level, def);
+  room.weatherDef = rollWeather(run, def);
   onAttempt(room);
 }
 
@@ -732,7 +812,14 @@ function onComplete(room) {
   // each player's offer is drawn independently: both can be offered the same thing
   // repeatable items (Spring, Swift, Magnet) stay on offer after you have them
   const notRepeat = (ids) => new Set(ids.filter((id) => !B.BY_ID[id].repeat));
-  for (const r of ROLES) personal[r] = offer(run, 'personal', 2, notRepeat(ownedIds(run, r)), chance, boss);
+  // a player locked into an exclusive item (Phase) can't use other actives or a second
+  // slot: don't offer them actives or Dual Wield
+  const useless = B.LIST.filter((b) => b.scope === 'personal' && b.color === 'yellow').map((b) => b.id).concat('dualwield');
+  for (const r of ROLES) {
+    const exclude = notRepeat(ownedIds(run, r));
+    if (exclusiveOf(run, r)) for (const id of useless) exclude.add(id);
+    personal[r] = offer(run, 'personal', 2, exclude, chance, boss);
+  }
   run.map = {
     rarity: boss ? 'rare' : 'common',
     uncommonChance: boss ? 0 : chance,
@@ -1013,11 +1100,12 @@ function view(room) {
     }),
     shots: run.shots.map((sh) => ({ x: sh.x, y: sh.y, kind: sh.kind })),
     bullets: run.bullets.map((b) => ({ x: b.x, y: b.y })),
+    weather: run.weather && { kind: run.weather.kind, state: run.weather.state, t: run.weather.t, dur: run.weather.dur, level: run.weather.level },
     acid: run.acid && { countdown: Math.max(0, run.acid.countdown), burning: run.acid.burning > 0 },
   };
 }
 
 module.exports = {
-  STAGES, HEARTS, ACID, withPools, createRun, start, loadStage, onAttempt, onComplete, updateEnemies, absorb,
+  STAGES, HEARTS, ACID, WEATHER, weatherOptions, withPools, createRun, start, loadStage, onAttempt, onComplete, updateEnemies, absorb,
   act, equip, use, view, grant, sentrySpots, enemySpecs, rng, offer,
 };

@@ -182,7 +182,8 @@ function analyse(def) {
     if (!P.isSolid(level, e.tx, e.ty + 1)) errors.push(`${el} exit has no floor`);
   }
 
-  return { errors, info };
+  // reach: cells ("x,y", where the feet stand) each character can get to, coarsely
+  return { errors, info, reach: { fire: result.fire.nodes, water: result.water.nodes } };
 }
 
 module.exports = { analyse };

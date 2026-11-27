@@ -414,6 +414,26 @@ test('Spring, Swift and Magnet keep being offered and stack; other personal item
   assert.ok(!seen.has('acidskin') && !seen.has('recall'), [...seen].join(','));
 });
 
+test('after Phase, that player is no longer offered personal actives; the other player still is', () => {
+  const r = run(31, { both: true });
+  C.grant(r, 'phase', 'fire');
+  const fire = new Set(), water = new Set();
+  for (let k = 0; k < 60; k++) {
+    finishRoom(r);
+    for (const id of r.run.map.personal.options.fire) fire.add(id);
+    for (const id of r.run.map.personal.options.water) water.add(id);
+    r.run.map = null; r.phase = 'playing'; r.run.stage = 0; r.loadStage();
+  }
+  assert.ok(fire.size > 0);
+  for (const id of fire) assert.notEqual(B.BY_ID[id].color, 'yellow', id);
+  assert.ok([...water].some((id) => B.BY_ID[id].color === 'yellow'), [...water].join(','));
+  // after a boss: no Wings or Dual Wield for fire, only Double Jump is left
+  r.run.stage = C.STAGES.indexOf('boss1');
+  C.onComplete(r);
+  assert.deepEqual(r.run.map.personal.options.fire, ['doublejump']);
+  assert.ok(r.run.map.personal.options.water.length === 2);
+});
+
 test('stacked Springs never jump faster than one tile per tick', () => {
   const L = P.parseLevel({ id: 'p', rows: ['#####', '#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '#FWfw', '#####'].map((x) => x.padEnd(5, '#')) });
   const b = P.createBody(L.spawns.fire);
@@ -916,4 +936,120 @@ test('pools: Challenge rooms get lava and water in dead-end corners; room 1 stay
     r.run.stage = 1; r.loadStage();
     assert.ok(has(r.levelDef, P.T.LAVA) && has(r.levelDef, P.T.WATER), `room 2 (${r.levelDef.id}) has both`);
   }
+});
+
+// ── weather ──
+
+const WEATHER_ARENA = [
+  '############',
+  '#..........#',
+  '#..........#',
+  '#.......##.#', // a bit of roof (cover), and a ledge on top of it (high ground)
+  '#..........#',
+  '#..........#',
+  '#.F.W..f.w.#',
+  '####~~######', // a water pool
+  '############',
+];
+function weatherRoom(kind, floodY = null) {
+  const r = run(90);
+  arena(r, WEATHER_ARENA);
+  r.enemySpecs = [];
+  r.weatherDef = { kind, floodY, rand: C.rng(1) };
+  C.onAttempt(r);
+  return r;
+}
+const put = (r, role, tx, row) => Object.assign(r.players[role].body, { x: tx * T + 2, y: (row + 1) * T - P.CHAR.height, vx: 0, vy: 0, onGround: true });
+// Skip the quiet spell and the 5 s lead-in, up to the strike.
+function toStrike(r) {
+  const w = r.run.weather;
+  assert.equal(w.state, 'idle');
+  assert.ok(w.dur >= C.WEATHER.firstMin && w.dur <= C.WEATHER.firstMax, 'first weather after 10–20 s');
+  w.t = w.dur;
+  tick(r);
+  assert.equal(w.state, 'lead');
+  assert.ok(g.takeEvents(r).some((e) => e.type === 'weather' && e.kind === r.weatherDef.kind), 'announced');
+  tick(r, Math.round(C.WEATHER.lead * 60) - 2);
+  assert.equal(w.state, 'lead', 'a 5 s lead-in');
+  assert.equal(r.phase, 'playing', 'harmless during the lead-in');
+  tick(r, 3);
+  assert.equal(w.state, 'strike');
+}
+
+test('weather: rolled only in rooms 6–10 — none, drought, rainstorm or acid flood', () => {
+  const seen = new Set();
+  for (let seed = 1; seed <= 60; seed++) {
+    const r = run(seed);
+    for (const stage of [1, 3, 4]) { r.run.stage = stage; r.loadStage(); assert.equal(r.run.weather, null, `stage ${stage}`); }
+    r.run.stage = 5 + (seed % 5); r.loadStage();
+    seen.add(r.run.weather ? r.run.weather.kind : 'none');
+    if (r.run.weather) assert.ok(C.weatherOptions(r.levelDef)[r.run.weather.kind], 'only weather the room can fairly have');
+  }
+  assert.deepEqual([...seen].sort(), ['drought', 'flood', 'none', 'rain']);
+});
+
+test('drought: at its peak, Water dies unless standing in a water pool', () => {
+  let r = weatherRoom('drought');
+  put(r, 'water', 4, 6); // in the pool
+  toStrike(r);
+  tick(r, 40);
+  assert.equal(r.phase, 'playing', 'in the pool: fine (and fire is unaffected)');
+  assert.equal(r.run.weather.state, 'idle', 'over; quiet again');
+  assert.ok(r.run.weather.dur >= C.WEATHER.gapMin && r.run.weather.dur <= C.WEATHER.gapMax);
+  r = weatherRoom('drought');
+  put(r, 'water', 9, 6);
+  toStrike(r);
+  tick(r, 2);
+  assert.equal(r.phase, 'dead');
+  assert.ok(g.takeEvents(r).some((e) => e.type === 'death' && e.role === 'water' && e.cause === 'drought'));
+});
+
+test('rainstorm: Fire dies unless something is overhead', () => {
+  let r = weatherRoom('rain');
+  put(r, 'fire', 8, 6); // under the roof
+  toStrike(r);
+  tick(r, 70);
+  assert.equal(r.phase, 'playing', 'covered: fine (and water is unaffected)');
+  r = weatherRoom('rain');
+  put(r, 'fire', 2, 6);
+  toStrike(r);
+  tick(r, 2);
+  assert.equal(r.phase, 'dead');
+  assert.ok(g.takeEvents(r).some((e) => e.type === 'death' && e.role === 'fire' && e.cause === 'rain'));
+});
+
+test('acid flood: the bottom fills with acid, holds for 5 s, drains; high ground (or Acid Skin) is safe', () => {
+  const surface = 5 * T;
+  let r = weatherRoom('flood', surface);
+  put(r, 'fire', 8, 2); put(r, 'water', 9, 2); // both on the ledge
+  toStrike(r);
+  const w = r.run.weather;
+  tick(r, 45);
+  assert.ok(w.level < r.level.pxHeight - T && w.level > surface, 'rising');
+  tick(r, 60);
+  assert.equal(w.level, surface, 'full');
+  tick(r, 60 * 5);
+  assert.ok(w.level > surface, 'draining after 5 s');
+  tick(r, 60);
+  assert.equal(w.state, 'idle');
+  assert.equal(r.phase, 'playing');
+  r = weatherRoom('flood', surface);
+  put(r, 'fire', 8, 2);
+  r.players.water.body.acidImmune = true;
+  toStrike(r);
+  tick(r, 200);
+  assert.equal(r.phase, 'playing', 'Acid Skin: immune');
+  r.players.water.body.acidImmune = false;
+  tick(r, 2);
+  assert.equal(r.phase, 'dead');
+  assert.ok(g.takeEvents(r).some((e) => e.type === 'death' && e.role === 'water' && e.cause === 'flood'));
+});
+
+test('weather options: drought needs a reachable water pool, rain cover, a flood high ground', () => {
+  const o = C.weatherOptions({ id: 'wa', rows: WEATHER_ARENA });
+  assert.equal(o.drought, true);
+  assert.equal(o.rain, true);
+  const flat = ['########', '#......#', '#......#', '#......#', '#F.W.fw#', '########', '########'];
+  const f = C.weatherOptions({ id: 'flat', rows: flat });
+  assert.deepEqual([f.drought, f.rain, f.flood], [false, false, null], 'a bare room gets no weather');
 });

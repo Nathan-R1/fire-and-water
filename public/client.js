@@ -230,7 +230,7 @@
     if (s.run) renderRun(s.run, s.phase);
   });
 
-  const CAUSE = { lastchance: "didn't make it back in time", burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
+  const CAUSE = { lastchance: "didn't make it back in time", burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned', drought: 'dried out in the drought', rain: 'was caught in the rain', flood: 'was caught in the acid flood' };
   socket.on('event', (e) => {
     if (e.type === 'level') {
       setLevel(e);
@@ -255,6 +255,10 @@
       showBanner('<b>Made it!</b>No heart lost: the room restarts', 1500);
     } else if (e.type === 'ward') {
       if (e.role === myRole) flashStatus(`🛡 Element Ward: ${e.seconds}s`);
+    } else if (e.type === 'weather') {
+      const W = { drought: '<b>☀ Drought!</b>💧 Water: get into a water pool', rain: '<b>🌧 Storm!</b>🔥 Fire: get under cover', flood: '<b>🫧 Acid flood!</b>Get up high' };
+      showBanner(W[e.kind] || '', 2000);
+      navigator.vibrate?.([20, 40, 20]);
     } else if (e.type === 'countdown') {
       navigator.vibrate?.(20);
     } else if (e.type === 'complete' && mode === 'challenge') {
@@ -1206,6 +1210,79 @@
         : role === myRole ? { x: target[role].x, y: target[role].y } : interpolated(role, now);
       drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx, dead: meDead, phase: me.phase } : target[role], target);
     }
+    if (target.run && target.run.weather) drawWeather(target.run.weather, now);
+  }
+
+  // Weather: always shows its sign (sun / clouds / bubbles), builds up over the 5 s
+  // lead-in, then strikes.
+  function drawWeather(w, now) {
+    const W = level.pxWidth, H = level.pxHeight;
+    const lead = w.state === 'lead' ? Math.min(1, w.t / w.dur) : 0;
+    const strike = w.state === 'strike';
+    const left = w.state === 'lead' ? Math.ceil(w.dur - w.t) : 0;
+    ctx.save();
+    if (w.kind === 'drought') {
+      // the sun in the top right, growing fast through the lead-in
+      const k = strike ? 1 : lead * lead;
+      const rad = 16 + k * 120;
+      const cx = W - TILE * 1.8, cy = TILE * 1.8;
+      if (k > 0) { ctx.fillStyle = `rgba(255, 150, 40, ${0.28 * k})`; ctx.fillRect(0, 0, W, H); }
+      ctx.strokeStyle = '#ffd84a'; ctx.lineWidth = 3;
+      for (let i = 0; i < 10; i++) {
+        const a = i / 10 * Math.PI * 2 + now / 1500;
+        ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * rad * 1.15, cy + Math.sin(a) * rad * 1.15);
+        ctx.lineTo(cx + Math.cos(a) * rad * 1.45, cy + Math.sin(a) * rad * 1.45); ctx.stroke();
+      }
+      ctx.fillStyle = '#ffcf3a'; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
+      if (strike) { ctx.fillStyle = 'rgba(255, 250, 220, 0.45)'; ctx.fillRect(0, 0, W, H); }
+    } else if (w.kind === 'rain') {
+      // a few clouds at the top; through the lead-in they spread and darken over the whole top
+      const k = strike ? 1 : lead;
+      if (k > 0) { ctx.fillStyle = `rgba(20, 24, 40, ${0.35 * k})`; ctx.fillRect(0, 0, W, H); }
+      const n = Math.round(3 + k * 11);
+      for (let i = 0; i < n; i++) {
+        const x = ((i * 0.618) % 1) * W + Math.sin(now / 2000 + i) * 10;
+        const y = TILE * (0.9 + (i % 3) * 0.35 + k * 0.4);
+        const sz = TILE * (1 + k * 0.9 + (i % 2) * 0.3);
+        const g = Math.round(200 - k * 120);
+        ctx.fillStyle = `rgb(${g}, ${g}, ${g + 10})`;
+        ctx.beginPath();
+        ctx.arc(x, y, sz, 0, Math.PI * 2); ctx.arc(x + sz, y + sz * 0.2, sz * 0.8, 0, Math.PI * 2); ctx.arc(x - sz, y + sz * 0.25, sz * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (strike) {
+        ctx.strokeStyle = 'rgba(160, 200, 255, 0.7)'; ctx.lineWidth = 2;
+        for (let i = 0; i < 120; i++) {
+          const x = ((i * 0.381 + (now / 900) * 0.05) % 1) * W;
+          const y = ((i * 0.737 + now / 500) % 1) * H;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 14); ctx.stroke();
+        }
+      }
+    } else if (w.kind === 'flood') {
+      // bubbles in the bottom right; through the lead-in they spread along the bottom
+      const k = strike ? 1 : lead;
+      const n = Math.round(4 + k * 26);
+      ctx.fillStyle = 'rgba(95, 211, 90, 0.8)';
+      for (let i = 0; i < n; i++) {
+        const span = TILE * 3 + k * (W - TILE * 5);
+        const x = W - TILE * 1.5 - ((i * 0.618) % 1) * span;
+        const rise = ((now / (700 - k * 300) + i * 0.37) % 1);
+        const y = H - TILE - rise * TILE * (1 + k);
+        ctx.beginPath(); ctx.arc(x, y, 3 + (i % 3), 0, Math.PI * 2); ctx.fill();
+      }
+      if (strike && w.level < H - TILE) {
+        ctx.fillStyle = 'rgba(80, 200, 70, 0.72)';
+        ctx.beginPath(); ctx.moveTo(0, H);
+        for (let x = 0; x <= W; x += 12) ctx.lineTo(x, w.level + Math.sin(x / 30 + now / 250) * 3);
+        ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+      }
+    }
+    if (left > 0) { // the lead-in countdown and what to do
+      const tip = { drought: '💧 Water: into a pool!', rain: '🔥 Fire: take cover!', flood: 'Get up high!' }[w.kind];
+      ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = 'bold 22px system-ui'; ctx.fillText(`${tip} ${left}`, W / 2, TILE * 4.2);
+    }
+    ctx.restore();
   }
   requestAnimationFrame(frame);
 })();
