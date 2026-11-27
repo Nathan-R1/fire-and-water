@@ -74,7 +74,7 @@ body {
 }
 #controls[hidden] { display: none; }
 
-#dpad, #jump { pointer-events: auto; }
+#dpad, #jump, #use { pointer-events: auto; }
 
 #dpad { display: flex; gap: 8px; }
 
@@ -215,3 +215,108 @@ body.on-menu { touch-action: auto; }
 #settings button { text-align: left; padding: 10px 12px !important; min-height: 44px; }
 #settings button[hidden] { display: none; }
 #hud[hidden], #stage[hidden], #rotate[hidden] { display: none !important; }
+
+/* ════════ Challenge mode ════════ */
+.menu-challenge { width: 100%; background: #7a2d4f !important; }
+.menu-hint { opacity: 0.6; font-size: 13px; margin: 6px 0 16px; }
+
+#hearts { color: #ff5d73; letter-spacing: 1px; white-space: nowrap; }
+#hearts[hidden] { display: none; }
+
+/* items & powers bar under the HUD */
+#bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0 12px 6px;
+  overflow-x: auto;
+  min-height: 40px;
+}
+#bar[hidden] { display: none; }
+#bar .sep { width: 1px; align-self: stretch; background: #3a3552; margin: 4px 4px; }
+#bar .label { font-size: 11px; opacity: 0.6; white-space: nowrap; }
+.chip {
+  position: relative;
+  flex: none;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  border: 2px solid #5b5480;
+  background: #1e1b2e;
+  color: #eee;
+  padding: 0;
+}
+.chip.yellow { border-color: #ffd84a; color: #ffd84a; }
+.chip.green { border-color: #5fd35a; color: #5fd35a; }
+.chip.power { border-color: #9b8cff; color: #c9c0ff; border-style: dashed; }
+.chip.spent { opacity: 0.4; }
+.chip .who { position: absolute; right: -4px; bottom: -4px; font-size: 11px; line-height: 1; }
+
+#tip {
+  position: fixed;
+  left: 50%;
+  top: 96px;
+  transform: translateX(-50%);
+  z-index: 15;
+  width: min(320px, calc(100% - 32px));
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(20, 18, 31, 0.97);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+#tip[hidden] { display: none; }
+#tip h3 { margin: 0 0 2px; font-size: 16px; display: flex; gap: 8px; align-items: center; }
+#tip .kind { font-size: 12px; opacity: 0.7; margin-bottom: 6px; }
+#tip p { margin: 0 0 8px; line-height: 1.4; font-size: 14px; }
+#tip .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#tip button { background: #2a2640; color: #eee; border: 0; border-radius: 8px; padding: 8px 12px; font: inherit; min-height: 40px; }
+
+/* use-item button sits above jump */
+.right-ctl { display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
+#use { width: 60px; height: 60px; font-size: 22px; color: #ffd84a; border: 2px solid #ffd84a; }
+#use[hidden] { display: none; }
+#use.spent { opacity: 0.35; }
+#use svg { width: 28px; height: 28px; }
+
+/* map between rooms, and the end of a run */
+#mapview, #over {
+  position: absolute;
+  inset: 8px;
+  z-index: 6;
+  overflow-y: auto;
+  touch-action: pan-y;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(20, 18, 31, 0.97);
+  text-align: center;
+}
+#mapview[hidden], #over[hidden] { display: none; }
+.track { display: flex; justify-content: center; align-items: center; gap: 4px; margin: 4px 0 14px; flex-wrap: wrap; }
+.node { width: 22px; height: 22px; border-radius: 50%; background: #2a2640; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.node.done { background: #4a4470; }
+.node.here { outline: 2px solid #ffd84a; }
+.node.boss { width: 28px; height: 28px; background: #5a2340; }
+.link { width: 10px; height: 2px; background: #3a3552; }
+.cards { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 8px 0 14px; }
+.card {
+  width: 150px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 2px solid #3a3552;
+  background: #1e1b2e;
+  color: #eee;
+  font: inherit;
+  text-align: left;
+}
+.card.rare { border-color: #b77dff; }
+.card.chosen { outline: 3px solid #ffd84a; }
+.card .ic { color: #ffd84a; }
+.card b { display: block; margin: 4px 0; }
+.card small { opacity: 0.75; line-height: 1.35; display: block; }
+.card .votes { margin-top: 6px; min-height: 18px; }
+.hands { display: flex; gap: 10px; justify-content: center; margin: 10px 0; }
+.hands button { font-size: 32px; width: 72px; height: 72px; border-radius: 50%; border: 0; background: #2a2640; }
+.hands button.chosen { outline: 3px solid #ffd84a; }
+.muted { opacity: 0.65; font-size: 14px; }
+#over .big { font-size: 28px; margin: 18px 0 6px; }
+#over button { background: #5a4fd0; color: #eee; border: 0; border-radius: 10px; padding: 12px 18px; font: inherit; font-size: 17px; margin: 6px; min-height: 48px; }

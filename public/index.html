@@ -12,7 +12,9 @@
     <div class="menu-card">
       <h1>🔥 Fire &amp; Water 💧</h1>
       <p class="menu-sub">Two players, one puzzle. Play together on two phones, or on one with ⇄.</p>
-      <button id="create" type="button" class="menu-primary">Create a room</button>
+      <button id="create" type="button" class="menu-primary">Campaign: create a room</button>
+      <button id="challenge" type="button" class="menu-challenge">Challenge run ☠</button>
+      <p class="menu-hint">Challenge: 10 random rooms and 2 bosses. Shared hearts, items and powers.</p>
       <form id="joinform" autocomplete="off">
         <input id="joincode" name="code" maxlength="8" placeholder="Room code" aria-label="Room code" autocapitalize="characters" spellcheck="false">
         <button type="submit">Join</button>
@@ -24,6 +26,7 @@
   <header id="hud">
     <button id="back" type="button" aria-label="Back to menu" title="Back to menu">←</button>
     <span id="status">Connecting…</span>
+    <span id="hearts" hidden></span>
     <span id="levelinfo"><button id="levelbtn" type="button" title="Choose a level (L)"><b id="levelnum">–</b> <span id="levelname"></span> ▾</button> · <span id="timer">0:00</span> · <span id="gemcount"></span></span>
     <span class="hud-right">
       <span id="ping" title="Round trip to the server"></span>
@@ -34,14 +37,19 @@
           <button id="restart" type="button" role="menuitem" hidden>↺ Restart level</button>
           <button id="fullscreen" type="button" role="menuitem" hidden>⛶ Fullscreen</button>
           <button id="share" type="button" role="menuitem">🔗 Share room <b id="code">----</b></button>
+          <button id="devskip" type="button" role="menuitem" hidden>⏭ Skip room (dev)</button>
         </div>
       </span>
     </span>
   </header>
+  <div id="bar" hidden></div>
+  <div id="tip" hidden></div>
 
   <main id="stage">
     <canvas id="game"></canvas>
     <div id="banner" hidden></div>
+    <div id="mapview" hidden></div>
+    <div id="over" hidden></div>
     <div id="levelpicker" hidden>
       <div class="picker-head"><b>Choose a level</b><button id="pickerclose" type="button" aria-label="Close">✕</button></div>
       <div id="levellist"></div>
@@ -54,11 +62,15 @@
       <span class="ctl" data-dir="-1">◀</span>
       <span class="ctl" data-dir="1">▶</span>
     </div>
-    <button id="jump" class="ctl" type="button" aria-label="Jump">▲</button>
+    <div class="right-ctl">
+      <button id="use" class="ctl" type="button" aria-label="Use item" hidden></button>
+      <button id="jump" class="ctl" type="button" aria-label="Jump">▲</button>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/shared/physics.js"></script>
+  <script src="/shared/bonuses.js"></script>
   <script src="client.js"></script>
 </body>
 </html>

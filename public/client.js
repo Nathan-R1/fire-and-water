@@ -10,11 +10,17 @@
   const params = new URLSearchParams(location.search);
   const code = (params.get('room') || '').toUpperCase();
   const startLevel = parseInt(params.get('level'), 10) || undefined;
+  const startMode = params.get('mode') === 'challenge' ? 'challenge' : undefined; // only used if the room is new
 
-  const goToRoom = (c) => {
+  const goToRoom = (c, mode) => {
     const p = new URLSearchParams({ room: c });
     if (startLevel) p.set('level', startLevel);
+    if (mode) p.set('mode', mode);
     location.href = `${location.pathname}?${p}`;
+  };
+  const newCode = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   };
 
   if (!CODE_RE.test(code)) {
@@ -22,10 +28,8 @@
     document.body.classList.add('on-menu');
     $('menu').hidden = false;
     for (const id of ['hud', 'stage', 'rotate', 'controls']) $(id).hidden = true;
-    $('create').addEventListener('click', () => {
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      goToRoom(Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join(''));
-    });
+    $('create').addEventListener('click', () => goToRoom(newCode()));
+    $('challenge').addEventListener('click', () => goToRoom(newCode(), 'challenge'));
     $('joincode').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
     $('joinform').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -90,31 +94,40 @@
   let meDead = false;     // we predicted a death: hold still until the server answers
   let statusOverride = null;
 
+  let mode = 'campaign';
+  let levelLoad = 0; // server's load counter: snapshots from an older load are ignored
   function setLevel(info) {
     level = Physics.parseLevel(info.def);
     levelIndex = info.index;
     levelTotal = info.total;
+    levelLoad = info.load;
     target = null;
     snaps = [];
     me = null;
     meDead = false;
     pending = [];
-    $('levelnum').textContent = `${levelIndex + 1}/${levelTotal}`;
+    const title = info.label || `Level ${levelIndex + 1}`;
+    $('levelnum').textContent = info.label || `${levelIndex + 1}/${levelTotal}`;
     $('levelname').textContent = level.name;
     resizeCanvas();
-    showBanner(`<b>Level ${levelIndex + 1}</b>${escapeHtml(level.name)}`, 1800);
+    showBanner(`<b>${escapeHtml(title)}</b>${escapeHtml(level.name)}`, 1800);
   }
 
   // ---- Networking ----
   // WebSocket straight away (no slow polling start); polling only if that fails.
   const socket = io({ transports: ['websocket', 'polling'], tryAllTransports: true });
-  socket.on('connect', () => socket.emit('join', { code, level: startLevel }));
+  socket.on('connect', () => socket.emit('join', { code, level: startLevel, mode: startMode }));
   socket.on('disconnect', () => { $('status').textContent = 'Reconnecting…'; });
   socket.on('error-msg', (msg) => { $('status').textContent = msg; });
 
   socket.on('joined', (msg) => {
     CHAR = msg.char;
     TILE = msg.tile;
+    mode = msg.mode || 'campaign';
+    $('devskip').hidden = !msg.dev;
+    document.body.classList.toggle('challenge', mode === 'challenge');
+    $('hearts').hidden = mode !== 'challenge';
+    $('bar').hidden = mode !== 'challenge';
     levelList = msg.levels || [];
     setLevel(msg.level);
     setRoles(msg.roles || [], msg.role);
@@ -128,6 +141,7 @@
   let levelList = [];
   const WORLDS = { 1: 'Cinder Caves', 2: 'Tide Halls', 3: 'Gale Spire', 4: 'Twin Core', 5: 'Crate Works', 6: 'Pulley Mill', 7: 'Counterweights', 8: 'Grand Machine' };
   function openPicker() {
+    if (mode === 'challenge') return flashStatus('No level picking in a challenge run');
     if (!myRole || !levelList.length) return flashStatus(myRole ? 'Loading…' : 'Only players can change level');
     const list = $('levellist');
     list.innerHTML = '';
@@ -164,6 +178,7 @@
     $('restart').hidden = !myRole;
     updateSwap();
     updateStatus();
+    if (run) { lastBar = ''; renderBar(run); renderUse(); }
   }
   socket.on('roles', (msg) => setRoles(msg.roles, msg.active));
   socket.on('notice', (msg) => flashStatus(msg));
@@ -175,7 +190,7 @@
   $('swap').addEventListener('click', () => socket.emit('swap'));
 
   socket.on('state', (s) => {
-    if (!level || s.level !== levelIndex) return; // level change in flight
+    if (!level || s.level !== levelLoad) return; // level change in flight
     target = s;
     const t = performance.now();
     snaps.push({ t, s });
@@ -186,20 +201,31 @@
     const total = (el) => level.gems.filter((g) => g.el === el).length;
     $('gemcount').textContent = `🔴${mine('fire')}/${total('fire')} 🔵${mine('water')}/${total('water')}`;
     updateStatus();
+    if (s.run) renderRun(s.run, s.phase);
   });
 
-  const CAUSE = { [T.LAVA]: 'lava', [T.WATER]: 'water', [T.ACID]: 'acid' };
+  const CAUSE = { [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned' };
   socket.on('event', (e) => {
     if (e.type === 'level') {
       setLevel(e);
     } else if (e.type === 'death') {
       const who = e.role === 'fire' ? '🔥 Fire' : '💧 Water';
-      showBanner(`<b>Oops!</b>${who} fell in the ${CAUSE[e.cause] || 'hazard'}`, 1000);
+      showBanner(`<b>Oops!</b>${who} ${CAUSE[e.cause] || 'died'}${mode === 'challenge' ? ' · −1 ❤' : ''}`, 1200);
       if (e.role === myRole) navigator.vibrate?.([40, 40, 80]);
     } else if (e.type === 'restart') {
       me = null; meDead = false; errX = errY = 0;
     } else if (e.type === 'gem') {
       if (e.role === myRole) navigator.vibrate?.(15);
+    } else if (e.type === 'shield') {
+      showBanner(`<b>🛡 Guardian!</b>${e.role === 'fire' ? '🔥 Fire' : '💧 Water'} was saved`, 1200);
+    } else if (e.type === 'bonus') {
+      const b = Bonuses.BY_ID[e.id];
+      if (b) flashStatus(`+ ${b.name}${e.role ? ` (${e.role === 'fire' ? '🔥' : '💧'})` : ''}`);
+    } else if (e.type === 'countdown') {
+      navigator.vibrate?.(20);
+    } else if (e.type === 'complete' && mode === 'challenge') {
+      showBanner(`<b>${escapeHtml(e.label || 'Room')} cleared!</b>⏱ ${formatTime(e.timeMs)}`, 2500);
+      navigator.vibrate?.([30, 50, 30, 50, 60]);
     } else if (e.type === 'complete') {
       const gems = e.totalGems ? ` · 💎 ${e.gems}/${e.totalGems}` : '';
       const deaths = e.deaths ? ` · ${e.deaths} ${e.deaths === 1 ? 'retry' : 'retries'}` : '';
@@ -210,6 +236,7 @@
   });
 
   $('restart').addEventListener('click', () => socket.emit('restart'));
+  $('devskip').addEventListener('click', () => socket.emit('dev-skip'));
 
   function updateStatus() {
     if (statusOverride) return;
@@ -368,7 +395,10 @@
   function reconcile(s) {
     const srv = s[myRole];
     const before = me && { x: me.x, y: me.y };
-    me = { x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing };
+    me = {
+      x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing,
+      jumpMul: srv.jumpMul, speedMul: srv.speedMul, maxAirJumps: srv.maxAirJumps, airJumps: srv.airJumps, flyT: srv.flyT, acidImmune: srv.acidImmune, magnet: srv.magnet,
+    };
     resetLocalWorld(s);
     pending = pending.filter((p) => p.s > srv.ack);
     // Replay; if the replay hits a pool, freeze there. If the server disagrees, the
@@ -602,7 +632,8 @@
   function drawChar(role, p, t, s) {
     const { width: w, height: h } = CHAR;
     const dead = s.phase === 'dead' || t.dead;
-    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : 1;
+    const blink = s.run && s.run.invuln[role] > 0 && Math.floor(performance.now() / 100) % 2;
+    ctx.globalAlpha = !t.connected ? 0.3 : dead ? 0.5 : blink ? 0.35 : 1;
     ctx.fillStyle = COLORS[role];
     ctx.fillRect(p.x, p.y, w, h);
     // Eyes look the way you're moving
@@ -618,6 +649,250 @@
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+  }
+
+  // ════════ Challenge mode UI ════════
+  const roleIcon = (r) => (r === 'fire' ? '🔥' : '💧');
+  const kindLabel = (b) => (b.type === 'power' ? 'Power · always on (just you)' : b.type === 'instant' ? 'Instant' : b.color === 'yellow' ? 'Item · active (equip it, use with ✦)' : 'Item · passive (always on for the team)');
+  let run = null;
+  let lastBar = '', lastMap = '', lastOver = '';
+
+  function renderRun(r, phase) {
+    run = r;
+    $('hearts').textContent = '❤'.repeat(Math.max(0, r.hearts)) + '♡'.repeat(Math.max(0, r.maxHearts - r.hearts));
+    renderBar(r);
+    renderUse(r);
+    renderMap(r, phase);
+    renderOver(r, phase);
+  }
+
+  // Items (team) and powers (per player) under the HUD. Tap one for its description.
+  function renderBar(r) {
+    const key = JSON.stringify([r.items, r.powers, r.equip, myRoles]);
+    if (key === lastBar) return;
+    lastBar = key;
+    const bar = $('bar');
+    bar.innerHTML = '';
+    const add = (el) => bar.append(el);
+    const chip = (b, cls, badge, onTap) => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = `chip ${cls}`;
+      el.innerHTML = b.icon + (badge ? `<span class="who">${badge}</span>` : '');
+      el.setAttribute('aria-label', b.name);
+      el.addEventListener('click', (e) => { e.stopPropagation(); onTap(); });
+      return el;
+    };
+    const label = (t) => { const s = document.createElement('span'); s.className = 'label'; s.textContent = t; return s; };
+    add(label(r.items.length ? 'Team' : 'Team: no items yet'));
+    for (const it of r.items) {
+      const b = Bonuses.BY_ID[it.id];
+      const who = ['fire', 'water'].filter((role) => r.equip[role] === it.uid).map(roleIcon).join('');
+      add(chip(b, `${b.color}${it.ready ? '' : ' spent'}`, who, () => showTip(b, it)));
+    }
+    for (const role of ['fire', 'water']) {
+      if (!r.powers[role].length) continue;
+      const sep = document.createElement('span'); sep.className = 'sep'; add(sep);
+      add(label(roleIcon(role)));
+      for (const id of r.powers[role]) { const b = Bonuses.BY_ID[id]; add(chip(b, 'power', '', () => showTip(b, null))); }
+    }
+  }
+
+  function showTip(b, item) {
+    const tip = $('tip');
+    tip.innerHTML = `<h3><span style="color:${b.color === 'green' ? '#5fd35a' : b.color === 'yellow' ? '#ffd84a' : '#c9c0ff'}">${b.icon}</span>${escapeHtml(b.name)}</h3>
+      <div class="kind">${kindLabel(b)}${item && !item.ready ? ' · used, recharges next room' : ''}</div><p>${escapeHtml(b.desc)}</p><div class="actions"></div>`;
+    if (item && b.color === 'yellow') {
+      for (const role of myRoles) {
+        const btn = document.createElement('button');
+        const on = run.equip[role] === item.uid;
+        btn.textContent = on ? `Equipped by ${roleIcon(role)} ✓` : `Equip for ${roleIcon(role)}`;
+        btn.disabled = on;
+        btn.addEventListener('click', () => { socket.emit('equip', { r: role, uid: item.uid }); tip.hidden = true; });
+        tip.querySelector('.actions').append(btn);
+      }
+    }
+    tip.hidden = false;
+  }
+  document.addEventListener('pointerdown', (e) => { if (!$('tip').hidden && !e.target.closest('#tip, .chip')) $('tip').hidden = true; });
+
+  // ✦ use-item button above jump: shows the item you have equipped.
+  function equippedItem() {
+    if (!run || !myRole) return null;
+    return run.items.find((i) => i.uid === run.equip[myRole]) || null;
+  }
+  function renderUse() {
+    const btn = $('use');
+    const it = equippedItem();
+    btn.hidden = mode !== 'challenge' || !myRole;
+    btn.innerHTML = it ? Bonuses.BY_ID[it.id].icon : '✦';
+    btn.classList.toggle('spent', !it || !it.ready);
+    btn.title = it ? Bonuses.BY_ID[it.id].name : 'No item equipped: tap an item in the bar';
+  }
+  function useItem() {
+    const it = equippedItem();
+    if (!it) return flashStatus('No item equipped: tap a yellow item in the bar');
+    if (!it.ready) return flashStatus(`${Bonuses.BY_ID[it.id].name} recharges next room`);
+    if (it.id === 'wings' && me) me.flyT = Bonuses.WINGS_SECONDS; // predict the flight right away
+    socket.emit('use', { r: myRole });
+    navigator.vibrate?.(15);
+  }
+  $('use').addEventListener('pointerdown', (e) => { e.preventDefault(); useItem(); });
+  addEventListener('keydown', (e) => { if ((e.code === 'KeyE' || e.code === 'ShiftLeft') && !e.repeat && mode === 'challenge') useItem(); });
+
+  // The map between rooms: team vote (rock paper scissors on a tie), then personal picks.
+  function card(id, { chosen, votes, onPick, rare }) {
+    const b = Bonuses.BY_ID[id];
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = `card${rare ? ' rare' : ''}${chosen ? ' chosen' : ''}`;
+    el.innerHTML = `<span class="ic">${b.icon}</span><b>${escapeHtml(b.name)}</b><small>${escapeHtml(b.desc)}</small><div class="votes">${votes || ''}</div>`;
+    if (onPick) el.addEventListener('click', onPick);
+    return el;
+  }
+  function renderMap(r, phase) {
+    const m = r.map;
+    const view = $('mapview');
+    const key = JSON.stringify([phase, m, r.stage, myRoles]);
+    if (key === lastMap) return;
+    lastMap = key;
+    view.hidden = !(phase === 'map' && m);
+    if (view.hidden) return;
+    view.innerHTML = '';
+    const h = (tag, html, cls) => { const el = document.createElement(tag); el.innerHTML = html; if (cls) el.className = cls; view.append(el); return el; };
+    // progress track
+    const track = h('div', '', 'track');
+    r.stages.forEach((s, i) => {
+      if (i) { const l = document.createElement('span'); l.className = 'link'; track.append(l); }
+      const n = document.createElement('span');
+      n.className = `node${s !== 'room' ? ' boss' : ''}${i <= r.stage ? ' done' : ''}${i === r.stage + 1 ? ' here' : ''}`;
+      n.textContent = s !== 'room' ? '☠' : i <= r.stage ? '✓' : '';
+      track.append(n);
+    });
+    const rare = m.rarity === 'rare';
+    if (m.step === 'shared') {
+      h('h2', rare ? '★ Boss reward: pick a team bonus' : 'Pick a team bonus');
+      h('p', myRoles.length > 1 ? 'You\'re playing both, so your choice decides.' : 'You both vote. If you disagree: rock, paper, scissors.', 'muted');
+      const cards = h('div', '', 'cards');
+      for (const id of m.shared.options) {
+        const votes = ['fire', 'water'].filter((role) => m.shared.votes[role] === id).map(roleIcon).join(' ');
+        const mine = myRole && m.shared.votes[myRole] === id;
+        cards.append(card(id, { rare, chosen: mine, votes, onPick: myRole ? () => socket.emit('map', { r: myRole, type: 'vote', pick: id }) : null }));
+      }
+    } else if (m.step === 'rps') {
+      h('h2', 'Tie! Rock, paper, scissors');
+      const vote = (role) => Bonuses.BY_ID[m.shared.votes[role]].name;
+      h('p', `🔥 wants <b>${escapeHtml(vote('fire'))}</b> · 💧 wants <b>${escapeHtml(vote('water'))}</b>. Winner's pick goes.${m.rps.round > 1 ? ` Round ${m.rps.round}.` : ''}`, 'muted');
+      if (m.rps.last) h('p', `Last round: 🔥 ${HAND[m.rps.last.fire]} vs 💧 ${HAND[m.rps.last.water]}: draw!`, 'muted');
+      const hands = h('div', '', 'hands');
+      for (const hand of ['rock', 'paper', 'scissors']) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = HAND[hand];
+        b.setAttribute('aria-label', hand);
+        if (myRole && m.rps.picks[myRole] === hand) b.className = 'chosen';
+        b.disabled = !myRole || !!m.rps.picks[myRole];
+        b.addEventListener('click', () => socket.emit('map', { r: myRole, type: 'rps', hand }));
+        hands.append(b);
+      }
+      if (myRole && m.rps.picks[myRole]) h('p', 'Waiting for your partner…', 'muted');
+    } else if (m.step === 'personal') {
+      if (m.rps && m.rps.winner) h('p', `${roleIcon(m.rps.winner)} won rock, paper, scissors (${HAND[m.rps.last.fire]} vs ${HAND[m.rps.last.water]}).`, 'muted');
+      h('h2', rare ? '★ Pick a rare personal bonus' : 'Pick a personal bonus');
+      const mine = myRoles.length ? myRoles : [];
+      for (const role of mine) {
+        const opts = m.personal.options[role];
+        h('p', `${roleIcon(role)} ${role === 'fire' ? 'Fire' : 'Water'}${m.personal.picks[role] ? ': picked ✓' : ''}`, 'muted');
+        const cards = h('div', '', 'cards');
+        if (!opts.length) {
+          const b = document.createElement('button'); b.type = 'button'; b.className = 'card'; b.textContent = 'Nothing new to offer: continue';
+          b.addEventListener('click', () => socket.emit('map', { r: role, type: 'pick', pick: 'none' }));
+          cards.append(b);
+        }
+        for (const id of opts) {
+          const el = card(id, { rare, chosen: m.personal.picks[role] === id, onPick: m.personal.picks[role] ? null : () => socket.emit('map', { r: role, type: 'pick', pick: id }) });
+          if (m.personal.picks[role] && m.personal.picks[role] !== id) el.style.opacity = '0.4';
+          cards.append(el);
+        }
+      }
+      const waiting = ['fire', 'water'].filter((role) => !m.personal.picks[role] && !mine.includes(role));
+      if (waiting.length) h('p', `Waiting for ${waiting.map(roleIcon).join(' ')}…`, 'muted');
+    }
+  }
+  const HAND = { rock: '✊', paper: '✋', scissors: '✌️' };
+
+  function renderOver(r, phase) {
+    const view = $('over');
+    const key = JSON.stringify([phase, r.result, r.stage]);
+    if (key === lastOver) return;
+    lastOver = key;
+    view.hidden = phase !== 'over';
+    if (view.hidden) return;
+    const won = r.result === 'victory';
+    view.innerHTML = `<div class="big">${won ? '🏆 Run complete!' : '☠ Out of hearts'}</div>
+      <p class="muted">${won ? 'Both bosses beaten.' : `You reached ${r.stages[r.stage] === 'room' ? `room ${r.stage + 1}` : `boss ${r.stage === 4 ? 1 : 2}`} of ${r.stages.length}.`}
+      ${r.items.length + r.powers.fire.length + r.powers.water.length} bonuses collected.</p>`;
+    const again = document.createElement('button'); again.type = 'button'; again.textContent = 'New run';
+    again.addEventListener('click', () => socket.emit('newrun'));
+    const menu = document.createElement('button'); menu.type = 'button'; menu.textContent = 'Menu';
+    menu.addEventListener('click', () => { location.href = location.pathname; });
+    view.append(again, menu);
+  }
+
+  // Enemies, shots and the boss-2 acid floor.
+  function drawEnemies(r, now) {
+    for (const e of r.enemies) {
+      ctx.globalAlpha = e.stun ? 0.4 : 1;
+      if (e.type === 'sentry') {
+        ctx.fillStyle = '#b04cff';
+        ctx.beginPath();
+        const cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2 + now / 600, rr = k % 2 ? e.w / 2 + 3 : e.w / 2 - 3;
+          ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+        }
+        ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(cx - 4, cy - 2, 3, 3); ctx.fillRect(cx + 1, cy - 2, 3, 3);
+      } else if (e.type === 'flyer') {
+        const flap = Math.sin(now / 80) * 6;
+        ctx.fillStyle = '#e04b6b';
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y + e.h / 2 - flap); ctx.lineTo(e.x + e.w / 2, e.y + e.h / 2); ctx.lineTo(e.x + e.w, e.y + e.h / 2 - flap);
+        ctx.lineTo(e.x + e.w / 2, e.y + e.h); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(e.x + e.w / 2 - 5, e.y + e.h / 2 + 2, 3, 3); ctx.fillRect(e.x + e.w / 2 + 2, e.y + e.h / 2 + 2, 3, 3);
+      } else if (e.type === 'walker') {
+        ctx.fillStyle = '#6b3fa0';
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(e.x, e.y, e.w, e.h, e.w / 4) : ctx.rect(e.x, e.y, e.w, e.h);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        const s = Math.max(3, e.w / 8);
+        ctx.fillRect(e.x + e.w * 0.25, e.y + e.h * 0.3, s, s); ctx.fillRect(e.x + e.w * 0.65, e.y + e.h * 0.3, s, s);
+      } else if (e.type === 'shooter') {
+        ctx.fillStyle = '#8a86a8'; ctx.fillRect(e.x, e.y, e.w, e.h);
+        ctx.fillStyle = '#ff6a2b'; ctx.fillRect(e.x + e.w / 2 - 4, e.y + e.h - 4, 8, 8);
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = '#ffb02e';
+    for (const s of r.shots) { ctx.beginPath(); ctx.arc(s.x + 5, s.y + 5, 5, 0, Math.PI * 2); ctx.fill(); }
+    if (r.acid) {
+      if (r.acid.burning) { // every walkable surface glows green
+        ctx.fillStyle = 'rgba(95, 211, 90, 0.75)';
+        for (let ty = 1; ty < level.height; ty++) for (let tx = 0; tx < level.width; tx++) {
+          if (Physics.isSolid(level, tx, ty) && !Physics.isSolid(level, tx, ty - 1)) ctx.fillRect(tx * TILE, ty * TILE - 3, TILE, 7);
+        }
+      }
+      const n = Math.ceil(r.acid.countdown);
+      const text = r.acid.burning ? 'ACID!' : n > 0 ? String(n) : '';
+      if (text) {
+        ctx.font = 'bold 72px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = r.acid.burning ? '#5fd35a' : 'rgba(255,255,255,0.85)';
+        ctx.fillText(text, level.pxWidth / 2, level.pxHeight / 2);
+        if (n === 1 && !r.acid.burning) { ctx.font = 'bold 24px system-ui'; ctx.fillText('jump!', level.pxWidth / 2, level.pxHeight / 2 + 34); }
+      }
+    }
   }
 
   let lastFrame = performance.now();
@@ -646,6 +921,7 @@
     drawPulleys(world);
     drawBoxes(world);
     drawGems(target, now);
+    if (target.run) drawEnemies(target.run, now);
     for (const role of ['fire', 'water']) {
       const pos = role === myRole && me && playing()
         ? { x: me.x + errX, y: me.y + errY }

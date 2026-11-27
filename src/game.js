@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const P = require('../shared/physics');
+const C = require('./challenge');
 
 const ROLES = ['fire', 'water'];
 const TICKS = { exitHold: 30, deathPause: 60, completePause: 180 }; // at 60 Hz
@@ -23,26 +24,41 @@ const LEVELS = fs.readdirSync(LEVEL_DIR)
   .sort()
   .map((f) => JSON.parse(fs.readFileSync(path.join(LEVEL_DIR, f), 'utf8')));
 
-function createRoom(code, { levels = LEVELS, startIndex = 0 } = {}) {
+// mode: 'campaign' (the 64 levels in order) or 'challenge' (a roguelike run, see challenge.js)
+function createRoom(code, { levels = LEVELS, startIndex = 0, mode = 'campaign', seed } = {}) {
   const room = {
     code,
+    mode,
     levels,
     levelIndex: Math.max(0, Math.min(startIndex, levels.length - 1)),
+    loadId: 0, // bumps on every level load, so clients can drop stale snapshots
     players: {},
     events: [],
   };
   for (const role of ROLES) room.players[role] = newPlayer();
-  loadLevel(room, room.levelIndex);
+  if (mode === 'challenge') {
+    room.run = C.createRun(seed);
+    room.loadStage = () => C.loadStage(room, (def, info) => loadDef(room, def, info));
+    C.start(room, (def, info) => loadDef(room, def, info));
+  } else {
+    loadLevel(room, room.levelIndex);
+  }
   return room;
 }
 
 function loadLevel(room, index) {
   room.levelIndex = index;
-  room.levelDef = room.levels[index];
-  room.level = P.parseLevel(room.levelDef);
+  loadDef(room, room.levels[index], { index, total: room.levels.length });
+}
+
+function loadDef(room, def, info) {
+  room.levelDef = def;
+  room.level = P.parseLevel(def);
   room.deaths = 0;
+  room.loadId++;
+  room.levelInfo = { ...info, load: room.loadId };
   resetAttempt(room);
-  room.events.push({ type: 'level', index, total: room.levels.length, def: room.levelDef });
+  room.events.push({ type: 'level', ...room.levelInfo, def });
 }
 
 // Put everyone back at the start of the current level.
@@ -56,6 +72,7 @@ function resetAttempt(room) {
   for (const role of ROLES) {
     room.players[role].body = P.createBody(room.level.spawns[role]);
   }
+  if (room.mode === 'challenge' && room.enemySpecs) C.onAttempt(room);
 }
 
 function newPlayer() {
@@ -161,8 +178,15 @@ function restart(room) {
 // Advance one fixed physics step.
 function step(room) {
   if (room.phase !== 'playing') discardInputs(room);
+  if (room.phase === 'map' || room.phase === 'over') return; // challenge: between rooms / run ended
   if (room.phase === 'dead') {
     if (++room.phaseTicks >= TICKS.deathPause) {
+      if (room.mode === 'challenge' && room.run.hearts <= 0) {
+        room.run.result = 'defeat';
+        room.phase = 'over';
+        room.events.push({ type: 'run-over', result: 'defeat' });
+        return;
+      }
       resetAttempt(room);
       room.events.push({ type: 'restart' });
     }
@@ -170,7 +194,8 @@ function step(room) {
   }
   if (room.phase === 'complete') {
     if (++room.phaseTicks >= TICKS.completePause) {
-      loadLevel(room, (room.levelIndex + 1) % room.levels.length);
+      if (room.mode === 'challenge') C.onComplete(room);
+      else loadLevel(room, (room.levelIndex + 1) % room.levels.length);
     }
     return;
   }
@@ -188,13 +213,15 @@ function step(room) {
     P.stepBody(room.level, p.body, p.input, bodies.filter((b) => b !== p.body), P.DT, room.state);
   }
 
+  const hits = room.mode === 'challenge' ? C.updateEnemies(room, P.DT) : [];
   for (const role of ROLES) {
     const body = room.players[role].body;
-    const killer = P.hazardUnder(room.level, body, role);
-    if (killer) {
+    const killer = P.hazardUnder(room.level, body, role) || (hits.find((h) => h.role === role) || {}).cause;
+    if (killer && !(room.mode === 'challenge' && C.absorb(room, role))) {
       room.phase = 'dead';
       room.phaseTicks = 0;
       room.deaths++;
+      if (room.mode === 'challenge') room.run.hearts--;
       room.events.push({ type: 'death', role, cause: killer });
       return;
     }
@@ -208,11 +235,12 @@ function step(room) {
     room.phaseTicks = 0;
     room.result = {
       index: room.levelIndex,
+      label: room.levelInfo.label,
       timeMs: Math.round(room.tick * P.DT * 1000),
       gems: room.state.gems.filter(Boolean).length,
       totalGems: room.level.gems.length,
       deaths: room.deaths,
-      last: room.levelIndex === room.levels.length - 1,
+      last: room.mode === 'campaign' && room.levelIndex === room.levels.length - 1,
     };
     room.events.push({ type: 'complete', ...room.result });
   }
@@ -225,12 +253,16 @@ function snapshot(room) {
     chars[role] = {
       x: body.x, y: body.y, vx: body.vx, vy: body.vy,
       onGround: body.onGround, coyoteT: body.coyoteT, bufferT: body.bufferT, pushing: !!body.pushing,
+      jumpMul: body.jumpMul || 1, speedMul: body.speedMul || 1, maxAirJumps: body.maxAirJumps || 0,
+      airJumps: body.airJumps || 0, flyT: body.flyT || 0, acidImmune: !!body.acidImmune, magnet: body.magnet || 0,
       ack, connected: !!socketId,
     };
   }
   return {
     ...chars,
-    level: room.levelIndex,
+    mode: room.mode,
+    level: room.loadId,
+    run: room.mode === 'challenge' ? C.view(room) : undefined,
     tick: room.tick,
     phase: room.phase,
     timeMs: Math.round(room.tick * P.DT * 1000),
@@ -250,5 +282,5 @@ function takeEvents(room) {
 }
 
 module.exports = {
-  ROLES, TICKS, LEVELS, MAX_WAIT, createRoom, loadLevel, claim, release, join, leave, isEmpty, setInput, queueInput, jump, restart, step, snapshot, takeEvents,
+  ROLES, TICKS, LEVELS, MAX_WAIT, C, createRoom, loadLevel, claim, release, join, leave, isEmpty, setInput, queueInput, jump, restart, step, snapshot, takeEvents,
 };

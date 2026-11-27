@@ -25,6 +25,18 @@
   };
 
   const FAN = { speed: 260, accel: 2600 }; // fans push up toward -speed
+  const FLY = { speed: 110, accel: 1500 };  // Wings: a gentle rise while flying
+
+  /*
+   * Optional per-character modifiers (Challenge mode powers), stored on the body so the
+   * client predicts them exactly like the server:
+   *   jumpMul       jump strength multiplier (Spring)
+   *   speedMul      run speed multiplier (Swift)
+   *   maxAirJumps   extra jumps in the air (Double jump); airJumps counts what's left
+   *   flyT          seconds of flight left (Wings)
+   *   acidImmune    acid doesn't kill (Acid skin)
+   *   magnet        extra pickup reach for stars, in pixels (Magnet)
+   */
   const BOX = { size: TILE };              // boxes are one tile; weight 1, same as a character
   const PULLEY = { speed: 80, thickness: 12 };
 
@@ -271,7 +283,7 @@
   // `others` are the other characters; boxes and platforms come from `state`.
   function stepBody(level, body, input, others, dt = DT, state = null) {
     const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    const cap = body.pushing ? CHAR.pushSpeed : CHAR.maxSpeed;
+    const cap = (body.pushing ? CHAR.pushSpeed : CHAR.maxSpeed) * (body.speedMul || 1);
     if (dir) {
       const accel = body.onGround ? CHAR.groundAccel : CHAR.airAccel;
       // Turning around uses friction too, so direction changes feel snappy.
@@ -282,14 +294,23 @@
     }
 
     body.coyoteT = body.onGround ? CHAR.coyote : Math.max(0, body.coyoteT - dt);
+    if (body.onGround) body.airJumps = body.maxAirJumps || 0;
+    const jumpVel = CHAR.jumpVel * (body.jumpMul || 1);
     if (body.bufferT > 0 && body.coyoteT > 0) {
-      body.vy = -CHAR.jumpVel;
+      body.vy = -jumpVel;
       body.bufferT = 0;
       body.coyoteT = 0;
+    } else if (body.bufferT > 0 && !body.onGround && body.airJumps > 0 && !(body.flyT > 0)) {
+      body.vy = -jumpVel; // double jump
+      body.airJumps--;
+      body.bufferT = 0;
     }
     body.bufferT = Math.max(0, body.bufferT - dt);
 
-    if (touchesTile(level, rectOf(body), T.FAN)) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
+    if (body.flyT > 0) {
+      body.flyT = Math.max(0, body.flyT - dt);
+      body.vy = approach(body.vy, -FLY.speed, FLY.accel * dt);
+    } else if (touchesTile(level, rectOf(body), T.FAN)) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
     else body.vy = Math.min(body.vy + CHAR.gravity * dt, CHAR.maxFall);
 
     const bodies = others.concat(state && state.boxes ? state.boxes : []);
@@ -415,6 +436,7 @@
     const tx0 = Math.floor((body.x + 4) / TILE), tx1 = Math.floor((body.x + CHAR.width - 4) / TILE);
     for (let tx = tx0; tx <= tx1; tx++) {
       const t = tileAt(level, tx, ty);
+      if (t === T.ACID && body.acidImmune) continue;
       if (isDeadly(t, element)) return t;
     }
     return 0;
@@ -423,10 +445,11 @@
   // Indices of gems newly collected by this body.
   function collectGems(level, state, body, element) {
     const r = rectOf(body);
+    const m = body.magnet || 0;
     const got = [];
     level.gems.forEach((g, i) => {
       if (state.gems[i] || g.el !== element) return;
-      const gr = { x: g.tx * TILE + 4, y: g.ty * TILE + 4, w: TILE - 8, h: TILE - 8 };
+      const gr = { x: g.tx * TILE + 4 - m, y: g.ty * TILE + 4 - m, w: TILE - 8 + 2 * m, h: TILE - 8 + 2 * m };
       if (overlaps(r, gr)) { state.gems[i] = true; got.push(i); }
     });
     return got;
@@ -452,7 +475,7 @@
   }
 
   return {
-    TILE, DT, CHAR, FAN, BOX, PULLEY, T,
+    TILE, DT, CHAR, FAN, FLY, BOX, PULLEY, T,
     parseLevel, tileAt, isSolid, isDeadly, createLevelState, cloneState, createBody, pressJump,
     stepBody, stepWorld, stepEnv, updateMechanisms, platformRects, hazardUnder, collectGems, atExit, doorRect,
   };

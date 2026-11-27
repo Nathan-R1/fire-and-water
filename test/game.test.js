@@ -80,7 +80,8 @@ test('snapshot includes level, phase and mechanism state', () => {
   const s = g.snapshot(r);
   assert.equal(s.fire.connected, true);
   assert.equal(s.water.connected, false);
-  assert.equal(s.level, 0);
+  assert.equal(s.level, r.loadId, 'level is the load counter, so clients can drop stale snapshots');
+  assert.equal(s.mode, 'campaign');
   assert.equal(s.phase, 'playing');
   assert.ok(Array.isArray(s.gates));
 });
