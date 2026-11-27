@@ -11,8 +11,8 @@ const LAVA = LV('lava', ['########', '#......#', '#F.fwW.#', '######L#']);
 
 const room = () => g.createRoom('ABCD', { levels: [L2] });
 
-test('there are 32 levels and they all load', () => {
-  assert.equal(g.LEVELS.length, 32);
+test('there are 64 levels and they all load', () => {
+  assert.equal(g.LEVELS.length, 64);
   for (let i = 0; i < g.LEVELS.length; i++) g.createRoom('X', { startIndex: i });
 });
 

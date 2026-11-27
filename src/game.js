@@ -177,7 +177,7 @@ function step(room) {
 
   room.tick++;
   const bodies = ROLES.map((r) => room.players[r].body);
-  P.updateMechanisms(room.level, room.state, bodies);
+  P.stepEnv(room.level, room.state, bodies);
   for (const [role, inp] of nextSteps(room)) {
     const p = room.players[role];
     if (inp) {
@@ -224,7 +224,7 @@ function snapshot(room) {
     const { body, socketId, ack } = room.players[role];
     chars[role] = {
       x: body.x, y: body.y, vx: body.vx, vy: body.vy,
-      onGround: body.onGround, coyoteT: body.coyoteT, bufferT: body.bufferT,
+      onGround: body.onGround, coyoteT: body.coyoteT, bufferT: body.bufferT, pushing: !!body.pushing,
       ack, connected: !!socketId,
     };
   }
@@ -238,6 +238,8 @@ function snapshot(room) {
     plates: room.state.plates,
     levers: room.state.levers,
     gates: room.state.gates,
+    boxes: room.state.boxes.map((b) => ({ x: b.x, y: b.y, vy: b.vy, onGround: b.onGround })),
+    pulleys: room.state.pulleys.map((p) => p.o),
   };
 }
 

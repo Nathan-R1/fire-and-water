@@ -1,7 +1,10 @@
 // Level sanity checker. Approximates what each character can reach on the tile grid
 // (walk, jump, fall, partner boost, fans) and reports levels where an exit, gem or
 // switch can't be reached. It's a coarse model, not a proof of solvability:
-// gates are assumed openable and partner boosts are allowed anywhere. Playtest anyway.
+// gates are assumed openable and partner boosts are allowed anywhere. Pulley platforms
+// count as floors at every height they can reach, and a box (like a partner) can give
+// a boost. It also checks pulleys have room to move and boxes don't start in a wall.
+// Playtest anyway.
 //
 // Usage: node tools/levelcheck.js [levels/NN-name.json ...]
 
@@ -22,13 +25,32 @@ function analyse(def) {
     for (let y = g.ty; y < g.ty + g.th; y++) for (let x = g.tx; x < g.tx + g.tw; x++) gateCells.add(`${x},${y}`);
   }
 
+  // Cells whose top a pulley platform can sit at (any whole-tile offset in its range).
+  const platFloor = new Set();
+  level.pulleys.forEach((p, i) => {
+    for (const [side, sign] of [[p.a, 1], [p.b, -1]]) {
+      for (let k = p.minT; k <= p.maxT; k++) {
+        const row = side.ty + sign * k;
+        for (let x = side.tx; x < side.tx + p.tw; x++) {
+          platFloor.add(`${x},${row}`);
+          // The platform must fit everywhere it can go (plus headroom when it's at the top).
+          if (P.isSolid(level, x, row)) errors.push(`pulley ${i} side ${side === p.a ? "a" : "b"} hits rock at (${x},${row})`);
+        }
+      }
+    }
+  });
+  for (const b of level.boxes) {
+    if (P.isSolid(level, b.tx, b.ty)) errors.push(`box at (${b.tx},${b.ty}) starts inside rock`);
+  }
+
   function reach(element, { boost, gatesSolid }) {
     const tile = (x, y) => P.tileAt(level, x, y);
     const solid = (x, y) => P.isSolid(level, x, y) || (gatesSolid && gateCells.has(`${x},${y}`));
     const empty = (x, y) => !solid(x, y);
     const clear = (x, y) => empty(x, y) && empty(x, y - 1);
     const fanAt = (x, y) => tile(x, y) === T.FAN || tile(x, y - 1) === T.FAN;
-    const stand = (x, y) => clear(x, y) && solid(x, y + 1) && !fanAt(x, y);
+    const floorAt = (x, y) => solid(x, y) || platFloor.has(`${x},${y}`);
+    const stand = (x, y) => clear(x, y) && floorAt(x, y + 1) && !fanAt(x, y);
     const safe = (x, y) => !P.isDeadly(tile(x, y + 1), element);
 
     const seen = new Set();
@@ -79,6 +101,10 @@ function analyse(def) {
     const maxUp = boost ? 4 : 3;
     while (queue.length) {
       const [x, y] = queue.shift();
+      // Riding a pulley platform: it can carry you to any height it reaches.
+      if (platFloor.has(`${x},${y + 1}`) && !solid(x, y + 1)) {
+        for (let yy = 1; yy < level.height - 1; yy++) if (platFloor.has(`${x},${yy + 1}`)) add(x, yy);
+      }
       for (const d of [-1, 1]) {
         // walk, or walk off an edge / into a fan
         const nx = x + d;

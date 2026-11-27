@@ -91,7 +91,7 @@
 
   // ---- Level picker ----
   let levelList = [];
-  const WORLDS = { 1: 'Cinder Caves', 2: 'Tide Halls', 3: 'Gale Spire', 4: 'Twin Core' };
+  const WORLDS = { 1: 'Cinder Caves', 2: 'Tide Halls', 3: 'Gale Spire', 4: 'Twin Core', 5: 'Crate Works', 6: 'Pulley Mill', 7: 'Counterweights', 8: 'Grand Machine' };
   function openPicker() {
     if (!myRole || !levelList.length) return flashStatus(myRole ? 'Loading…' : 'Only players can change level');
     const list = $('levellist');
@@ -295,15 +295,22 @@
   const toInput = (d) => (d < 0 ? { left: true, right: false } : d > 0 ? { left: false, right: true } : NONE);
   const playing = () => target && target.phase === 'playing';
 
-  function partnerBody() {
+  // Prediction runs on its own copy of the world (switches, boxes, pulleys) and of the
+  // partner, rebuilt from every snapshot, so pushing a box or riding a pulley is instant.
+  let localState = null;
+  let partner = null;
+
+  function resetLocalWorld(s) {
     const other = myRole === 'fire' ? 'water' : 'fire';
-    return target ? [target[other]] : [];
+    localState = Physics.cloneState(s);
+    partner = { x: s[other].x, y: s[other].y, vx: 0, vy: 0, onGround: true };
   }
 
   // Returns true if this step lands us in a deadly pool (same check as the server).
   function predictStep(inp) {
     if (inp.j) Physics.pressJump(me);
-    Physics.stepBody(level, me, toInput(inp.d), partnerBody(), Physics.DT, target);
+    Physics.stepEnv(level, localState, [me, partner]);
+    Physics.stepBody(level, me, toInput(inp.d), [partner], Physics.DT, localState);
     return Physics.hazardUnder(level, me, myRole) !== 0;
   }
 
@@ -326,7 +333,8 @@
   function reconcile(s) {
     const srv = s[myRole];
     const before = me && { x: me.x, y: me.y };
-    me = { x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT };
+    me = { x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing };
+    resetLocalWorld(s);
     pending = pending.filter((p) => p.s > srv.ack);
     // Replay; if the replay hits a pool, freeze there. If the server disagrees, the
     // next snapshot replays without hitting it and we carry on.
@@ -500,6 +508,45 @@
     });
   }
 
+  function drawBoxes(s) {
+    for (const b of s.boxes) {
+      const x = b.x, y = b.y, n = Physics.BOX.size;
+      ctx.fillStyle = '#9a6a3a';
+      ctx.fillRect(x, y, n, n);
+      ctx.strokeStyle = '#6b4626';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, n - 2, n - 2);
+      ctx.beginPath();
+      ctx.moveTo(x + 3, y + 3); ctx.lineTo(x + n - 3, y + n - 3);
+      ctx.moveTo(x + n - 3, y + 3); ctx.lineTo(x + 3, y + n - 3);
+      ctx.stroke();
+    }
+  }
+
+  // Platforms hang from ropes over two wheels joined by a beam near the top.
+  function drawPulleys(s) {
+    const rects = Physics.platformRects(level, s);
+    level.pulleys.forEach((p, i) => {
+      const [A, B] = rects.slice(i * 2, i * 2 + 2);
+      const top = Math.max(TILE * 0.6, Math.min(p.a.y + p.min, p.b.y - p.max) - TILE * 1.2);
+      const ax = A.x + A.w / 2, bx = B.x + B.w / 2;
+      ctx.strokeStyle = '#c9b98a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ax, A.y); ctx.lineTo(ax, top);
+      ctx.lineTo(bx, top); ctx.lineTo(bx, B.y);
+      ctx.stroke();
+      ctx.fillStyle = '#8a86a8';
+      for (const cx of [ax, bx]) { ctx.beginPath(); ctx.arc(cx, top, 6, 0, Math.PI * 2); ctx.fill(); }
+      for (const r of [A, B]) {
+        ctx.fillStyle = '#7d7398';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = '#b3a9d4';
+        ctx.fillRect(r.x, r.y, r.w, 3);
+      }
+    });
+  }
+
   function drawGems(s, now) {
     level.gems.forEach((g, i) => {
       if (s.gems[i]) return;
@@ -555,7 +602,13 @@
     drawPools(now);
     drawFanAir(now);
     if (!target) return;
-    drawMechanisms(target);
+    // Draw the world as you predict it (so a box you push moves with you), or as the
+    // server last said when you're not playing.
+    const predicting = me && playing() && localState;
+    const world = predicting ? localState : Physics.cloneState(target);
+    drawMechanisms(world);
+    drawPulleys(world);
+    drawBoxes(world);
     drawGems(target, now);
     for (const role of ['fire', 'water']) {
       const pos = role === myRole && me && playing()

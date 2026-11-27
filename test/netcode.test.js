@@ -165,3 +165,65 @@ test('a predicted death happens on the same input as the server death', () => {
   }
   assert.equal(deathAck, predictedSeq);
 });
+
+// Same contract with boxes and pulleys: the client predicts the environment too
+// (as public/client.js does: stepEnv on a cloned snapshot, then the character).
+function envPredictionErrors(levelDef, script, steps, role = 'water') {
+  const other = role === 'fire' ? 'water' : 'fire';
+  const r = g.createRoom('NETE', { levels: [levelDef] });
+  g.join(r, 'a'); g.join(r, 'b'); g.takeEvents(r);
+  const level = r.level;
+  let snap = null, me = null, local = null, partner = null, pending = [], seq = 0;
+  const predicted = new Map();
+  let errors = 0, compared = 0, worst = 0;
+  const step = (inp) => {
+    if (inp.j) P.pressJump(me);
+    P.stepEnv(level, local, [me, partner]);
+    P.stepBody(level, me, { left: inp.d < 0, right: inp.d > 0 }, [partner], P.DT, local);
+  };
+  const inFlight = [];
+  for (let t = 0; t < steps; t++) {
+    const sc = script(t);
+    const inp = { s: ++seq, d: sc.d, j: !!sc.j };
+    pending.push(inp);
+    if (me) { step(inp); predicted.set(inp.s, { x: me.x, y: me.y }); }
+    inFlight.push([t + 4, inp]);
+    while (inFlight.length && inFlight[0][0] <= t) g.queueInput(r, role, inFlight.shift()[1]);
+    g.queueInput(r, other, { s: t + 1, d: 0, j: false });
+    g.step(r); g.takeEvents(r);
+    if (t % 2 === 0) {
+      snap = JSON.parse(JSON.stringify(g.snapshot(r)));
+      const srv = snap[role];
+      const p = predicted.get(srv.ack);
+      if (p && snap.phase === 'playing') {
+        compared++;
+        const e = Math.hypot(p.x - srv.x, p.y - srv.y);
+        worst = Math.max(worst, e);
+        if (e > 1e-6) errors++;
+      }
+      me = { x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing };
+      local = P.cloneState(snap);
+      partner = { x: snap[other].x, y: snap[other].y, vx: 0, vy: 0, onGround: true };
+      pending = pending.filter((q) => q.s > srv.ack);
+      for (const q of pending) step(q);
+    }
+  }
+  return { errors, compared, worst, room: r };
+}
+
+test('prediction matches the server exactly while pushing a box', () => {
+  const def = g.LEVELS.find((l) => l.id.startsWith('33'));
+  const { errors, compared, room } = envPredictionErrors(def, (t) => ({ d: t < 200 ? 1 : 0, j: t === 210 }), 260);
+  assert.ok(room.state.boxes[0].x > 12 * P.TILE, 'the box was pushed');
+  assert.ok(compared > 50);
+  assert.equal(errors, 0);
+});
+
+test('prediction stays exact riding a pulley down', () => {
+  const def = g.LEVELS.find((l) => l.id.startsWith('41'));
+  // walk right off the ledge onto the platform, ride it down, then walk under the wall
+  const { worst, compared, room } = envPredictionErrors(def, (t) => ({ d: t < 40 || t > 420 ? 1 : 0 }), 480);
+  assert.ok(room.state.pulleys[0].o > 0, 'the platform went down');
+  assert.ok(compared > 100);
+  assert.ok(worst < 1e-6, `worst error ${worst}`);
+});
