@@ -7,7 +7,7 @@ const game = require('./src/game');
 const db = require('./src/db');
 
 const PORT = process.env.PORT || 3000;
-const SNAPSHOT_MS = 1000 / 30;
+const SNAPSHOT_STEPS = 2; // a snapshot every 2 physics steps = 30 Hz
 const ROOM_CODE_RE = /^[A-Z0-9]{4,8}$/;
 const DEV = process.env.DEV === '1'; // local testing: enables the Skip room button
 const EMPTY_ROOM_MS = Number(process.env.EMPTY_ROOM_MS) || 60 * 1000; // keep an empty room (and its level) this long, e.g. across a reload
@@ -160,11 +160,11 @@ io.on('connection', (socket) => {
   });
 });
 
-// Fixed-timestep loop: physics at exactly 60 Hz regardless of timer jitter,
-// snapshots at ~30 Hz, events as soon as they happen.
+// Fixed-timestep loop: physics at exactly 60 Hz regardless of timer jitter, a snapshot
+// after every 2nd step (30 Hz in game time, evenly spaced), events as soon as they happen.
 let last = performance.now();
 let acc = 0;
-let lastSnapshot = 0;
+let stepsSinceSnapshot = 0;
 setInterval(() => {
   const now = performance.now();
   acc += Math.min(now - last, 250) / 1000; // cap catch-up after a stall
@@ -172,12 +172,13 @@ setInterval(() => {
   while (acc >= P.DT) {
     for (const { state } of rooms.values()) game.step(state);
     acc -= P.DT;
+    stepsSinceSnapshot++;
   }
   for (const { state } of rooms.values()) {
     for (const e of game.takeEvents(state)) io.to(state.code).emit('event', e);
   }
-  if (now - lastSnapshot >= SNAPSHOT_MS) {
-    lastSnapshot = now;
+  if (stepsSinceSnapshot >= SNAPSHOT_STEPS) {
+    stepsSinceSnapshot = 0;
     for (const { state } of rooms.values()) io.to(state.code).emit('state', game.snapshot(state));
   }
 }, 1000 / 120);

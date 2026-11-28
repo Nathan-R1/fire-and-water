@@ -118,6 +118,9 @@
   let jumpQueued = false;
   let errX = 0, errY = 0; // visual offset left over from corrections, decays to 0
   let meDead = false;     // we predicted a death: hold still until the server answers
+  // Challenge enemies predicted alongside your character (see "Enemies" below)
+  let pr = null;                 // predicted copy of the run's enemies, shots, acid and weather
+  const enemyErr = new Map();    // enemy id -> visual offset left over from corrections
   let statusOverride = null;
 
   let mode = 'campaign';
@@ -129,9 +132,13 @@
     levelLoad = info.load;
     target = null;
     snaps = [];
+    clockSamples = [];
+    clockOff = null;
     me = null;
     meDead = false;
     pending = [];
+    pr = null;
+    enemyErr.clear();
     const title = info.label || `Level ${levelIndex + 1}`;
     $('levelnum').textContent = info.label || `${levelIndex + 1}/${levelTotal}`;
     $('levelname').textContent = level.name;
@@ -221,6 +228,7 @@
     const t = performance.now();
     snaps.push({ t, s });
     while (snaps.length > 2 && snaps[1].t < t - 1000) snaps.shift();
+    noteClock(s.st, t);
     if (myRole) reconcile(s);
     $('timer').textContent = formatTime(s.timeMs);
     const mine = (el) => level.gems.filter((g, i) => g.el === el && s.gems[i]).length;
@@ -406,13 +414,19 @@
     const other = myRole === 'fire' ? 'water' : 'fire';
     localState = Physics.cloneState(s);
     partner = { x: s[other].x, y: s[other].y, vx: 0, vy: 0, onGround: true };
+    pr = predictedRun(s.run);
   }
 
   // Returns true if this step lands us in a deadly pool (same check as the server).
+  // Steps the predicted enemies too, after the characters, as the server does.
   function predictStep(inp) {
     if (inp.j) Physics.pressJump(me);
     Physics.stepEnv(level, localState, [me, partner]);
     Physics.stepBody(level, me, toInput(inp.d), [partner], Physics.DT, localState);
+    if (pr) {
+      if (inp.d !== 0 || inp.j) pr.started = true; // moving starts the room, as on the server
+      Enemies.predict(pr, Physics.DT, level, localState);
+    }
     return Physics.hazardUnder(level, me, myRole, localState) !== 0;
   }
 
@@ -435,6 +449,7 @@
   function reconcile(s) {
     const srv = s[myRole];
     const before = me && { x: me.x, y: me.y };
+    const enemiesBefore = predictedViews(true);
     me = {
       x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing,
       jumpMul: srv.jumpMul, speedMul: srv.speedMul, maxAirJumps: srv.maxAirJumps, airJumps: srv.airJumps, flyT: srv.flyT, acidImmune: srv.acidImmune, magnet: srv.magnet, phase: srv.phase,
@@ -450,21 +465,120 @@
       const dx = before.x - me.x + errX, dy = before.y - me.y + errY;
       if (Math.hypot(dx, dy) < 2 * TILE) { errX = dx; errY = dy; } else { errX = errY = 0; }
     }
+    // Same for predicted enemies: ease small corrections (a walker that turned at a box
+    // your partner pushed), snap big ones (a restart).
+    enemyErr.clear();
+    for (const [id, v] of predictedViews(false)) {
+      const old = enemiesBefore.get(id);
+      if (!old) continue;
+      const dx = old.x - v.x, dy = old.y - v.y;
+      if (Math.hypot(dx, dy) < 2 * TILE && Math.hypot(dx, dy) > 0.01) enemyErr.set(id, { x: dx, y: dy });
+    }
   }
 
-  // Other characters are drawn ~100 ms in the past, blended between two snapshots.
+  // ---- Server clock ----
+  // Snapshots are stamped with the server's step count (st) and sent every 2 steps.
+  // Others are drawn by that clock, not by when snapshots happened to arrive, so they
+  // move evenly even when the network delivers snapshots in bursts. The offset is the
+  // smallest delay seen in the last 3 s (the least-delayed snapshot), eased so the
+  // picture never jumps.
+  const STEP_MS = Physics.DT * 1000;
+  let clockSamples = []; // [arrival time, arrival time - server time]
+  let clockOff = null;   // our clock minus the server's, for the least-delayed snapshot
+  function noteClock(st, t) {
+    const off = t - st * STEP_MS;
+    clockSamples.push([t, off]);
+    while (clockSamples[0][0] < t - 3000) clockSamples.shift();
+    let best = off;
+    for (const c of clockSamples) best = Math.min(best, c[1]);
+    clockOff = clockOff === null ? best : clockOff + (best - clockOff) * 0.1;
+  }
+
+  // Others are drawn ~100 ms behind the server clock, blended between two snapshots.
+  // Returns the snapshots either side of that moment and how far between them (0..1).
   const INTERP_MS = 100;
-  function interpolated(role, now) {
-    const t = now - INTERP_MS;
+  function snapPair(now) {
+    const ms = now - clockOff - INTERP_MS;
+    const last = snaps[snaps.length - 1].s;
+    if (ms >= last.st * STEP_MS) return { a: last, b: last, k: 0 }; // late snapshot: hold
     for (let i = snaps.length - 1; i > 0; i--) {
-      const a = snaps[i - 1], b = snaps[i];
-      if (a.t <= t && t <= b.t) {
-        if (a.s.level !== b.s.level) break;
-        const k = (t - a.t) / (b.t - a.t || 1);
-        return { x: a.s[role].x + (b.s[role].x - a.s[role].x) * k, y: a.s[role].y + (b.s[role].y - a.s[role].y) * k };
-      }
+      const a = snaps[i - 1].s, b = snaps[i].s;
+      const ta = a.st * STEP_MS, tb = b.st * STEP_MS;
+      if (ms < ta) continue;
+      if (a.level !== b.level) return { a: b, b, k: 0 };
+      return { a, b, k: Math.min(1, (ms - ta) / (tb - ta || 1)) };
     }
-    return { x: target[role].x, y: target[role].y };
+    return { a: snaps[0].s, b: snaps[0].s, k: 0 };
+  }
+  function interpolated(role, now) {
+    if (!snaps.length) return { x: target[role].x, y: target[role].y };
+    const { a, b, k } = snapPair(now);
+    return { x: a[role].x + (b[role].x - a[role].x) * k, y: a[role].y + (b[role].y - a[role].y) * k };
+  }
+
+  // ---- Enemies ----
+  // Enemies that follow fixed rules (shared/enemies.js) are predicted forward alongside
+  // your character, from each snapshot through the inputs the server hasn't processed
+  // yet, so they line up with you exactly: what touches you on screen is what touches
+  // you on the server. The rest (charger, burrower), and everything when you're only
+  // watching, are drawn ~100 ms back and blended between snapshots like your partner.
+  const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x))); // it came as JSON; works on older Safari
+  function predictedRun(run) {
+    if (!run || !run.enemies) return null;
+    return {
+      started: run.started, time: run.time, slow: run.slow,
+      enemies: copy(run.enemies), shots: copy(run.shots || []), bullets: copy(run.bullets || []),
+      acid: copy(run.acid), weather: copy(run.weather),
+    };
+  }
+  // id -> where a predicted enemy is drawn (with its leftover correction if `withErr`).
+  function predictedViews(withErr) {
+    const out = new Map();
+    if (!pr) return out;
+    for (const e of pr.enemies) {
+      if (e.dead || !Enemies.PREDICTED.has(e.type)) continue;
+      const v = Enemies.view(e), er = withErr && enemyErr.get(e.id);
+      out.set(e.id, er ? { x: v.x + er.x, y: v.y + er.y } : { x: v.x, y: v.y });
+    }
+    return out;
+  }
+
+  // Blend two lists of things with ids; anything new, gone or teleported isn't blended.
+  function blendById(listA, listB, k) {
+    const byId = new Map(listA.map((x) => [x.id, x]));
+    return listB.map((v) => {
+      const o = byId.get(v.id);
+      if (!o || Math.hypot(v.x - o.x, v.y - o.y) > 3 * TILE) return v;
+      const out = { ...v, x: o.x + (v.x - o.x) * k, y: o.y + (v.y - o.y) * k };
+      if (o.w != null) { out.w = o.w + (v.w - o.w) * k; out.h = o.h + (v.h - o.h) * k; }
+      return out;
+    });
+  }
+
+  // What to draw for the run: enemies (as views), shots, bullets, acid and weather.
+  function enemyScene(now) {
+    const run = target.run;
+    if (!run || !run.enemies || !snaps.length) return null;
+    const { a, b, k } = snapPair(now);
+    const ra = a.run || run, rb = b.run || run;
+    const scene = {
+      ...rb,
+      enemies: blendById(ra.enemies.map(Enemies.view), rb.enemies.map(Enemies.view), k),
+      shots: blendById(ra.shots || [], rb.shots || [], k),
+      bullets: blendById(ra.bullets || [], rb.bullets || [], k),
+    };
+    if (!(me && playing() && pr)) return scene;
+    const smoothed = new Map(scene.enemies.map((v) => [v.id, v]));
+    return {
+      ...scene,
+      enemies: pr.enemies.filter((e) => !e.dead).map((e) => {
+        if (!Enemies.PREDICTED.has(e.type)) return smoothed.get(e.id) || Enemies.view(e);
+        const v = Enemies.view(e), er = enemyErr.get(e.id);
+        if (er) { v.x += er.x; v.y += er.y; }
+        return v;
+      }),
+      shots: pr.shots, bullets: pr.bullets, acid: pr.acid, weather: pr.weather,
+    };
   }
 
   // ---- Ping readout ----
@@ -1137,7 +1251,8 @@
     ctx.fillStyle = '#7ff3ff';
     for (const b of r.bullets || []) ctx.fillRect(b.x, b.y, 8, 4);
     if (r.acid) {
-      if (r.acid.burning) { // every walkable surface glows green
+      const burning = r.acid.burning > 0; // seconds left (it was a flag before)
+      if (burning) { // every walkable surface glows green
         ctx.fillStyle = 'rgba(95, 211, 90, 0.75)';
         for (let ty = 1; ty < level.height; ty++) for (let tx = 0; tx < level.width; tx++) {
           if (Physics.isSolid(level, tx, ty) && !Physics.isSolid(level, tx, ty - 1)) ctx.fillRect(tx * TILE, ty * TILE - 3, TILE, 7);
@@ -1145,13 +1260,13 @@
       }
       const n = Math.ceil(r.acid.countdown);
       // A jump keeps you up ~0.62 s and the burn lasts 0.1 s: be in the air for it.
-      const text = r.acid.burning ? 'ACID!' : r.acid.countdown > 0 && r.acid.countdown < 0.5 ? 'JUMP!' : n > 0 ? String(n) : '';
+      const text = burning ? 'ACID!' : r.acid.countdown > 0 && r.acid.countdown < 0.5 ? 'JUMP!' : n > 0 ? String(n) : '';
       if (text) {
         ctx.font = 'bold 72px system-ui';
         ctx.textAlign = 'center';
-        ctx.fillStyle = r.acid.burning ? '#5fd35a' : 'rgba(255,255,255,0.85)';
+        ctx.fillStyle = burning ? '#5fd35a' : 'rgba(255,255,255,0.85)';
         ctx.fillText(text, level.pxWidth / 2, level.pxHeight / 2);
-        if (n === 1 && !r.acid.burning) { ctx.font = 'bold 24px system-ui'; ctx.fillText('jump!', level.pxWidth / 2, level.pxHeight / 2 + 34); }
+        if (n === 1 && !burning) { ctx.font = 'bold 24px system-ui'; ctx.fillText('jump!', level.pxWidth / 2, level.pxHeight / 2 + 34); }
       }
     }
   }
@@ -1166,6 +1281,10 @@
     while (tickAcc >= Physics.DT) { clientTick(); tickAcc -= Physics.DT; }
     const decay = Math.exp(-dt * 12);
     errX *= decay; errY *= decay;
+    for (const [id, er] of enemyErr) {
+      er.x *= decay; er.y *= decay;
+      if (Math.abs(er.x) + Math.abs(er.y) < 0.05) enemyErr.delete(id);
+    }
     if (!level || !staticLayer) return;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1183,7 +1302,8 @@
     drawPulleys(world);
     drawBoxes(world);
     drawGems(target, now);
-    if (target.run) drawEnemies(target.run, now);
+    const scene = enemyScene(now);
+    if (scene) drawEnemies(scene, now);
     if (target.run && target.run.ghost) {
       for (const role of ['fire', 'water']) {
         const left = target.run.ghost[role];
@@ -1210,7 +1330,7 @@
         : role === myRole ? { x: target[role].x, y: target[role].y } : interpolated(role, now);
       drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx, dead: meDead, phase: me.phase } : target[role], target);
     }
-    if (target.run && target.run.weather) drawWeather(target.run.weather, now);
+    if (scene && scene.weather) drawWeather(scene.weather, now);
   }
 
   // Weather: always shows its sign (sun / clouds / bubbles), builds up over the 5 s
