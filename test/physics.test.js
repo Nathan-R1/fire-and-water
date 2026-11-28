@@ -102,11 +102,28 @@ test('one character can stand on the other', () => {
   assert.equal(top.onGround, true);
 });
 
-test('characters block each other sideways', () => {
+test('characters pass through each other sideways', () => {
   const a = P.createBody(level.spawns.fire);
   const b = P.createBody(level.spawns.water);
+  const bx = b.x;
   for (let i = 0; i < 120; i++) P.stepWorld(level, [a, b], [RIGHT, NONE]);
-  assert.ok(a.x + P.CHAR.width <= b.x + 1e-6);
+  assert.ok(a.x > bx + P.CHAR.width, 'walked right through');
+  assert.equal(b.x, bx, 'without pushing the other');
+});
+
+test('jumping up into the other character doesn\'t bump: only landing on their head counts', () => {
+  const bottom = P.createBody(level.spawns.fire);
+  const top = P.createBody({ x: bottom.x, y: 30 });
+  for (let i = 0; i < 120; i++) P.stepWorld(level, [bottom, top], [NONE, NONE]);
+  assert.equal(top.onGround, true, 'standing on the head');
+  // the bottom one walks out from under, then back in and jumps: it passes up through
+  for (let i = 0; i < 30; i++) P.stepWorld(level, [bottom, top], [RIGHT, NONE]);
+  assert.ok(top.y > FLOOR_Y - P.CHAR.height - 1, 'top dropped to the floor');
+  for (let i = 0; i < 30; i++) P.stepWorld(level, [bottom, top], [LEFT, NONE]);
+  P.pressJump(bottom);
+  let minY = Infinity;
+  for (let i = 0; i < 40; i++) { P.stepWorld(level, [bottom, top], [NONE, NONE]); minY = Math.min(minY, bottom.y); }
+  assert.ok(minY < FLOOR_Y - 40, `jumped freely (${FLOOR_Y - minY}px)`);
 });
 
 test('parseLevel rejects ragged rows and missing spawns', () => {

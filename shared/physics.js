@@ -329,12 +329,16 @@
     } else if (touchesTile(level, rectOf(body), T.FAN) || inGeyser(state, rectOf(body))) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
     else body.vy = Math.min(body.vy + CHAR.gravity * dt, CHAR.maxFall);
 
-    const bodies = others.filter((o) => !o.phase).concat(state && state.boxes ? state.boxes : []);
-    const mx = moveAxis(level, body, 'x', body.vx * dt, bodies, state, true);
+    // Characters pass through each other sideways and from below; the only contact is
+    // landing on the other's head (a one-way platform: you must start above it).
+    const boxes = state && state.boxes ? state.boxes : [];
+    const mx = moveAxis(level, body, 'x', body.vx * dt, boxes, state, true);
     body.pushing = mx.pushed;
     if (mx.pushed) body.vx = Math.max(-CHAR.pushSpeed, Math.min(CHAR.pushSpeed, body.vx));
     else if (mx.hit) body.vx = 0;
-    const my = moveAxis(level, body, 'y', body.vy * dt, bodies, state, false);
+    const feet = body.y + CHAR.height;
+    const heads = body.vy > 0 ? others.filter((o) => !o.phase && feet <= o.y + EPS) : [];
+    const my = moveAxis(level, body, 'y', body.vy * dt, boxes.concat(heads), state, false);
     body.onGround = my.hit && body.vy > 0;
     if (my.hit) body.vy = 0;
   }

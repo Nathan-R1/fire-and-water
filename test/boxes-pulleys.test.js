@@ -38,11 +38,11 @@ test('boxes rest on the floor and can be pushed, slower than walking', () => {
   assert.ok(Math.abs(w.fire.x + P.CHAR.width - box.x) < 1e-6, 'fire is right behind the box');
 });
 
-test('a box stops against an obstacle (here the other character) and blocks the pusher', () => {
+test('a box stops against the wall and blocks the pusher; characters don\'t stop it', () => {
   const w = world(FLAT);
   w.run(400, RIGHT);
   const box = w.state.boxes[0];
-  assert.ok(Math.abs(box.x + T - w.water.x) < 1e-6, `box stopped at water (${box.x + T} vs ${w.water.x})`);
+  assert.ok(Math.abs(box.x + T - 15 * T) < 1e-6, `box stopped at the wall (${box.x + T} vs ${15 * T})`);
   assert.equal(w.fire.vx, 0);
 });
 
