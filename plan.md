@@ -133,10 +133,20 @@ Each milestone ends deployed and playable on two phones.
 | **M6** | Accounts and progress | Anonymous auth, display names, `runs`/`progress` in Supabase, per-level leaderboards |
 | **M7** | Lobby and reconnect | Home, Create, Join and Lobby screens, choosing a character, ready-up, session-token reconnect, safe shutdown on deploy |
 | **M8** | Art and audio | Original sprite sheets (idle, run, jump, die), tileset, particles, music and sound effects, settings screen |
+| **S1** | Security hardening (before any public link; see [Security backlog](#security-backlog)) | S1.1–S1.4 below are done: room/connection limits, crash isolation, unguessable room codes, security headers |
 | **M9** | Launch prep | Starter plan, rate limits, PWA, performance pass on low-end Android, privacy review, about 20 levels across 2 worlds |
 | Later | Extras | Wind and mirrors, a third world, an in-game level editor, sharing custom levels, solo mode controlling both characters, spectator mode |
 
 M1 and M2 are the risky part, because touch-controlled jumping over a network is what makes or breaks the game. Everything after that is content and features on a proven base.
+
+### Security backlog
+
+From a security review on 2026-11-28 (AI-generated, needs human verification). High risk first.
+
+- **S1.1 (High) Unlimited room creation: DoS and DB growth.** Any socket can create a room with any code (`server.js` `join`). Each room steps physics at 60 Hz, sends snapshots at 30 Hz and inserts a Supabase row, and empty rooms live another 60 s. A connect/join/disconnect loop exhausts the single Node process and fills `rooms`. Fix: cap total rooms (e.g. 200, "server busy" past it); rate-limit connections and room creation per IP (use `x-forwarded-for` behind Render); per-socket event rate limit that drops/disconnects floods; set Socket.IO `maxHttpBufferSize` to a few KB (default 1 MB); free rooms that never had a player join straight away.
+- **S1.2 (High) One exception takes down every room.** The game loop `setInterval` and socket handlers have no try/catch or `uncaughtException` handler, and room state is in memory only. Any throw in `game.step` / `C.updateEnemies` / `C.use` (bug or crafted message) crashes the process and ends every run. Fix: try/catch per room around `step`/`snapshot`/`takeEvents` and around each socket handler; on error log it and reset or close just that room.
+- **S1.3 (Medium) Guessable room codes and takeover.** Codes are 4 chars from `Math.random()` on the client, and the server creates any code it's sent. Anyone who guesses one can take a free character, take the spare from a one-device player, restart or `goto` levels, or watch. Fix: server-generated codes of 6+ chars with `crypto.randomInt`; separate create vs join (join only existing rooms); don't let newcomers take characters from players already in the room.
+- **S1.4 (Medium) No security headers.** No CSP, `X-Content-Type-Options`, frame-ancestors or Referrer-Policy, and `X-Powered-By` is on. The client uses `innerHTML` in places (currently escaped). Fix: add `helmet` (or set headers by hand) with a `default-src 'self'` CSP; `app.disable('x-powered-by')`.
 
 ---
 

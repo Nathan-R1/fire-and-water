@@ -230,7 +230,7 @@
     if (s.run) renderRun(s.run, s.phase);
   });
 
-  const CAUSE = { lastchance: "didn't make it back in time", burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned', drought: 'dried out in the drought', rain: 'was caught in the rain', flood: 'was caught in the acid flood' };
+  const CAUSE = { lastchance: "didn't make it back in time", burrower: 'was caught by the burrower', mimic: 'was stabbed by a mimic box', fakechest: 'was bitten by a fake chest', charger: 'was run over by a charger', patrol: 'ran into a walker', bomb: 'was hit by a bomb', [T.LAVA]: 'fell in the lava', [T.WATER]: 'fell in the water', [T.ACID]: 'fell in the acid', sentry: 'touched a sentry', flyer: 'was caught by the flyer', walker: 'was squashed by the walker', shot: 'was shot', 'acid floor': 'was on the ground when it burned', drought: 'dried out in the drought', rain: 'was caught in the rain', flood: 'was caught in the acid flood' };
   socket.on('event', (e) => {
     if (e.type === 'level') {
       setLevel(e);
@@ -247,6 +247,13 @@
     } else if (e.type === 'bonus') {
       const b = Bonuses.BY_ID[e.id];
       if (b) flashStatus(`+ ${b.name}${e.role ? ` (${e.role === 'fire' ? '🔥' : '💧'})` : ''}`);
+    } else if (e.type === 'chest') {
+      flashStatus(e.rare ? '✨ Rare chest! An uncommon team bonus after this room' : '📦 Chest! A team bonus after this room');
+      if (e.role === myRole) navigator.vibrate?.(30);
+    } else if (e.type === 'heal') {
+      flashStatus(`+${e.hearts} ❤ (${e.source === 'rest' ? 'Catch Your Breath' : 'Lifesteal'})`);
+    } else if (e.type === 'solidify') {
+      if (e.role === myRole) flashStatus('🪨 Solidify: this pool is hard now');
     } else if (e.type === 'stomp') {
       if (e.role === myRole) navigator.vibrate?.(25);
     } else if (e.type === 'lastchance') {
@@ -437,7 +444,7 @@
     const before = me && { x: me.x, y: me.y };
     me = {
       x: srv.x, y: srv.y, vx: srv.vx, vy: srv.vy, onGround: srv.onGround, coyoteT: srv.coyoteT, bufferT: srv.bufferT, pushing: srv.pushing,
-      jumpMul: srv.jumpMul, speedMul: srv.speedMul, maxAirJumps: srv.maxAirJumps, airJumps: srv.airJumps, flyT: srv.flyT, acidImmune: srv.acidImmune, magnet: srv.magnet, phase: srv.phase,
+      jumpMul: srv.jumpMul, speedMul: srv.speedMul, maxAirJumps: srv.maxAirJumps, airJumps: srv.airJumps, flyT: srv.flyT, dashT: srv.dashT, dashDir: srv.dashDir, acidImmune: srv.acidImmune, magnet: srv.magnet, phase: srv.phase,
     };
     resetLocalWorld(s);
     pending = pending.filter((p) => p.s > srv.ack);
@@ -855,6 +862,7 @@
     if (!it.ready) return flashStatus(`${Bonuses.BY_ID[it.id].name} recharges next room`);
     // predict instant effects so they feel immediate
     if (it.id === 'wings' && me) me.flyT = Bonuses.BY_ID.wings.duration;
+    if (it.id === 'dash' && me) { me.dashT = Physics.DASH.time; me.dashDir = me.facing || 1; }
     if (it.id === 'phase' && me) me.phase = !me.phase;
     socket.emit('use', { r: myRole, slot });
     navigator.vibrate?.(15);
@@ -942,8 +950,7 @@
     });
     const rare = m.rarity === 'rare';
     if (m.step === 'shared') {
-      h('h2', rare ? '★ Boss reward: pick a team bonus' : 'Pick a team bonus');
-      if (!rare) h('p', m.uncommonChance > 0 ? `⭐ Stars collected: ${Math.round(m.uncommonChance * 100)}% chance of each offer being uncommon` : '⭐ Collect stars for a chance at uncommon bonuses', 'muted');
+      h('h2', { boss: '★ Boss reward: pick a rare team bonus', rarechest: '✨ Rare chest: pick an uncommon team bonus', chest: '📦 Chest: pick a team bonus' }[m.teamFrom] || 'Pick a team bonus');
       h('p', myRoles.length > 1 ? 'You\'re playing both, so your choice decides.' : 'You both vote. If you disagree: rock, paper, scissors.', 'muted');
       const cards = h('div', '', 'cards');
       for (const id of m.shared.options) {
@@ -971,6 +978,7 @@
     } else if (m.step === 'personal') {
       if (m.rps && m.rps.winner) h('p', `${roleIcon(m.rps.winner)} won rock, paper, scissors (${HAND[m.rps.last.fire]} vs ${HAND[m.rps.last.water]}).`, 'muted');
       h('h2', rare ? '★ Pick a rare personal bonus' : 'Pick a personal bonus');
+      if (!rare) h('p', m.uncommonChance > 0 ? `⭐ Stars collected: ${Math.round(m.uncommonChance * 100)}% chance of each offer being uncommon` : '⭐ Collect stars for a chance at uncommon bonuses', 'muted');
       const mine = myRoles.length ? myRoles : [];
       for (const role of mine) {
         const opts = m.personal.options[role];
@@ -1087,6 +1095,11 @@
           ctx.strokeStyle = 'rgba(255,120,80,0.6)'; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.arc(gx, gy, 1.5 * TILE + 12, Math.PI, 0); ctx.stroke();
         }
+      } else if (e.type === 'mimic' && e.chest) {
+        // a fake chest: looks exactly like a closed one… except when it shakes
+        const sx = e.shake ? Math.sin(now / 25) * 2 : 0;
+        drawChest({ x: e.x + sx, y: e.y, w: e.w, h: e.h, rare: e.rare, open: false }, now);
+        if (e.shake || r.keenEye) { ctx.fillStyle = '#ff3b3b'; ctx.fillRect(e.x + sx + e.w / 2 - 5, e.y + e.h * 0.55, 3, 3); ctx.fillRect(e.x + sx + e.w / 2 + 2, e.y + e.h * 0.55, 3, 3); }
       } else if (e.type === 'mimic') {
         // looks exactly like a box… except when it shakes
         const sx = e.shake ? Math.sin(now / 25) * 2 : 0;
@@ -1183,6 +1196,7 @@
     drawPulleys(world);
     drawBoxes(world);
     drawGems(target, now);
+    if (target.run && target.run.chest) drawChest(target.run.chest, now);
     if (target.run) drawEnemies(target.run, now);
     if (target.run && target.run.ghost) {
       for (const role of ['fire', 'water']) {
@@ -1210,7 +1224,38 @@
         : role === myRole ? { x: target[role].x, y: target[role].y } : interpolated(role, now);
       drawChar(role, pos, role === myRole && me ? { ...target[role], vx: me.vx, dead: meDead, phase: me.phase } : target[role], target);
     }
+    if (target.run && target.run.umbrella) {
+      for (const role of ['fire', 'water']) {
+        const p = role === myRole && me && playing() ? { x: me.x + errX, y: me.y + errY } : role === myRole ? target[role] : interpolated(role, now);
+        drawUmbrella(p.x + CHAR.width / 2, p.y - 4, role);
+      }
+    }
     if (target.run && target.run.weather) drawWeather(target.run.weather, now);
+  }
+
+  // A chest: gold-trimmed for a rare one, lid open once someone has touched it.
+  function drawChest(c, now) {
+    const { x, w, h } = c;
+    const y = c.y + (c.open ? 0 : Math.sin(now / 400) * 0.5);
+    ctx.fillStyle = c.rare ? '#5b3d8a' : '#8a5a2b';
+    ctx.fillRect(x, y + h * 0.4, w, h * 0.6);
+    ctx.fillStyle = c.rare ? '#7a55b5' : '#a8743c';
+    if (c.open) ctx.fillRect(x, y - h * 0.25, w, h * 0.3); // lid flipped up
+    else ctx.fillRect(x, y, w, h * 0.45);
+    ctx.fillStyle = c.rare ? '#ffd84a' : '#d9b060';
+    ctx.fillRect(x, y + h * 0.4, w, 2);
+    ctx.fillRect(x + w / 2 - 2, y + h * 0.3, 4, 5);
+    if (c.rare && !c.open) { // sparkle
+      ctx.fillStyle = `rgba(255,240,150,${0.5 + 0.5 * Math.sin(now / 200)})`;
+      ctx.fillRect(x + w - 3, y - 5, 3, 3); ctx.fillRect(x - 2, y + 2, 2, 2);
+    }
+  }
+
+  function drawUmbrella(cx, top, role) {
+    ctx.fillStyle = role === 'fire' ? '#ff8a5c' : '#5cb8ff';
+    ctx.beginPath(); ctx.arc(cx, top, 14, Math.PI, 0); ctx.fill();
+    ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx, top + 10); ctx.stroke();
   }
 
   // Weather: always shows its sign (sun / clouds / bubbles), builds up over the 5 s

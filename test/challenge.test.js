@@ -126,8 +126,12 @@ test('Guardian then Last Chance: a second hit uses Last Chance', () => {
   assert.ok(f.phase, 'Last Chance keeps you intangible');
 });
 
+// An opened chest in the current room, so the map offers a team bonus.
+const openChest = (r, rare = false) => { r.run.chest = { x: 0, y: 0, w: 0, h: 0, rare, open: true }; };
+
 test('map: same vote → granted; then both pick a personal bonus → next room', () => {
   const r = run(5);
+  openChest(r);
   finishRoom(r);
   assert.equal(r.phase, 'map');
   const m = r.run.map;
@@ -150,6 +154,7 @@ test('map: same vote → granted; then both pick a personal bonus → next room'
 
 test('map: different votes → rock paper scissors (draws replay), winner\'s vote applies', () => {
   const r = run(6);
+  openChest(r);
   finishRoom(r);
   const [a, b] = r.run.map.shared.options;
   C.act(r, 'fire', { type: 'vote', pick: a });
@@ -169,7 +174,9 @@ test('map: different votes → rock paper scissors (draws replay), winner\'s vot
 
 test('one device playing both: its vote counts for both, no rock paper scissors', () => {
   const r = run(7, { both: true });
+  openChest(r);
   finishRoom(r);
+  assert.equal(r.run.map.step, 'shared');
   C.act(r, 'fire', { type: 'vote', pick: r.run.map.shared.options[1] });
   assert.equal(r.run.map.step, 'personal');
 });
@@ -322,8 +329,12 @@ test('offers: common after rooms, uncommon chance = share of stars collected; pe
   let unc = 0, all = 0;
   for (let k = 0; k < 400; k++) for (const id of C.offer(r.run, 'personal', 1, new Set(), 0.5, false)) { all++; if (tierOf(id) === 'uncommon') unc++; }
   assert.ok(unc / all > 0.4 && unc / all < 0.6, `${unc}/${all}`);
-  // no team uncommons exist: team offers fall back to common
-  for (const id of C.offer(r.run, 'team', 2, new Set(), 1, false)) assert.equal(tierOf(id), 'common');
+  // team offers come in a fixed tier, and drop a tier when that one's used up
+  for (const [tier, want] of [['common', 'common'], ['uncommon', 'uncommon'], ['rare', 'rare']]) {
+    for (let k = 0; k < 20; k++) for (const id of C.offerTeam(r.run, 2, new Set(), tier)) assert.equal(tierOf(id), want, tier);
+  }
+  const allRare = new Set(B.pool('team', 'rare').map((b) => b.id));
+  for (const id of C.offerTeam(r.run, 2, allRare, 'rare')) assert.equal(tierOf(id), 'uncommon', 'no rares left: uncommon');
   // bosses: rare
   for (const id of C.offer(r.run, 'personal', 2, new Set(), 0, true)) assert.equal(tierOf(id), 'rare');
   // both players can be offered the same item
@@ -489,7 +500,7 @@ test('enemy mix: room 2 sentries or mimics; rooms 3–4 add patrolling walkers, 
     for (const stage of [1, 2, 6]) {
       const r = run(seed);
       r.run.stage = stage; r.loadStage();
-      const types = new Set(r.run.enemies.map((e) => e.type));
+      const types = new Set(r.run.enemies.filter((e) => !e.chest).map((e) => e.type)); // fake chests come on their own
       const ground = [...types].filter((t) => t !== 'bomber');
       assert.ok(ground.length <= 1, `stage ${stage}: mixed ${ground}`);
       assert.equal(types.has('bomber'), stage >= 5, `stage ${stage}: bomber`);
@@ -547,7 +558,7 @@ test('rooms 6–9: one ground enemy type (sentry, walker, burrower, mimic or cha
   for (let seed = 1; seed <= 60; seed++) {
     const r = run(seed);
     r.run.stage = 5 + (seed % 4); r.loadStage();
-    const ground = new Set(r.run.enemies.map((e) => e.type).filter((t) => t !== 'bomber'));
+    const ground = new Set(r.run.enemies.filter((e) => !e.chest).map((e) => e.type).filter((t) => t !== 'bomber'));
     assert.ok(ground.size <= 1, [...ground].join(','));
     for (const t of ground) seen.add(t);
   }
@@ -896,15 +907,17 @@ test('Solidify: harden your own pool so your teammate can walk on it', () => {
   arena(r, ['############', '#..........#', '#..........#', '#F.......Wfw', '###LLLL#####']);
   r.enemySpecs = []; C.onAttempt(r);
   C.grant(r, 'solidify', 'fire');
+  assert.equal(B.BY_ID.solidify.color, 'green', 'a passive');
   const f = r.players.fire.body, w = r.players.water.body;
+  r.run.started = true;
+  tick(r, 5);
+  assert.equal(r.state.safePools.length, 0, 'nothing until fire steps in');
   Object.assign(f, { x: 4 * T + 2, y: 4 * T - P.CHAR.height - 1 });
   tick(r, 5);
-  assert.equal(C.use(r, 'fire'), true);
   assert.equal(r.state.safePools.length, 4, 'the whole connected pool');
   Object.assign(w, { x: 5 * T + 2, y: 4 * T - P.CHAR.height - 1 });
   tick(r, 30);
   assert.equal(r.phase, 'playing', 'water stands on hardened lava');
-  assert.equal(C.use(r, 'fire'), false, 'once per room');
 });
 
 test('pools: Challenge rooms get lava and water in dead-end corners; room 1 stays untouched', () => {
@@ -1052,4 +1065,136 @@ test('weather options: drought needs a reachable water pool, rain cover, a flood
   const flat = ['########', '#......#', '#......#', '#......#', '#F.W.fw#', '########', '########'];
   const f = C.weatherOptions({ id: 'flat', rows: flat });
   assert.deepEqual([f.drought, f.rain, f.flood], [false, false, null], 'a bare room gets no weather');
+});
+
+// ── Chests ──
+
+test('chests: about half of rooms 2–4 and 6–9 have one, ~10% rare (usually up on their own platform); never room 1 or bosses', () => {
+  const r = run(40);
+  let rooms = 0, chests = 0, rare = 0, platforms = 0, fakes = 0;
+  for (let k = 0; k < 240; k++) {
+    for (const stage of [0, 4]) {
+      r.run.stage = stage; r.loadStage();
+      if (stage === 0) assert.equal(r.run.chest, null, 'room 1: none');
+      assert.ok(!r.enemySpecs.some((e) => e.chest), 'no fake chests in room 1 or bosses');
+    }
+    r.run.stage = [1, 2, 3, 5, 6, 7, 8][k % 7]; r.loadStage();
+    rooms++;
+    const c = r.run.chest;
+    if (c) {
+      chests++;
+      if (c.rare) {
+        rare++;
+        const tx = Math.floor((c.x + c.w / 2) / T), ty = Math.round((c.y + c.h) / T);
+        if (P.tileAt(r.level, tx, ty) === P.T.SOLID && !P.isSolid(P.parseLevel(g.LEVELS.find((l) => l.id === r.levelDef.id)), tx, ty)) platforms++;
+      }
+      assert.ok(!P.isSolid(r.level, Math.floor((c.x + c.w / 2) / T), Math.floor((c.y + 2) / T)), 'not inside rock');
+    }
+    const fake = r.enemySpecs.find((e) => e.chest);
+    if (fake) {
+      fakes++;
+      assert.equal(fake.type, 'mimic');
+      if (c) assert.ok(Math.abs(fake.x - c.x) > T || Math.abs(fake.y - c.y) > T, 'not on the real chest');
+    }
+  }
+  assert.ok(chests / rooms > 0.4 && chests / rooms < 0.6, `${chests}/${rooms}`);
+  assert.ok(rare > 0 && rare / chests < 0.25, `${rare}/${chests} rare`);
+  assert.ok(platforms > 0, 'some rare chests up on a platform');
+  assert.ok(fakes / rooms > 0.15 && fakes / rooms < 0.35, `${fakes}/${rooms} fake`);
+});
+
+test('chests: touch one to open it; a restart closes it again', () => {
+  const r = run(41);
+  const f = r.players.fire.body;
+  r.run.chest = { x: f.x, y: f.y, w: 20, h: 16, rare: false, open: false };
+  tick(r, 2);
+  assert.equal(r.run.chest.open, true);
+  g.restart(r);
+  assert.equal(r.run.chest.open, false);
+});
+
+test('team bonuses only from chests (common), rare chests (uncommon) and bosses (rare)', () => {
+  const tierOf = (id) => B.BY_ID[id].rarity;
+  let r = run(42, { both: true });
+  r.run.chest = null;
+  finishRoom(r);
+  assert.equal(r.run.map.teamFrom, null);
+  assert.deepEqual(r.run.map.shared.options, []);
+  assert.equal(r.run.map.step, 'personal', 'straight to the personal pick');
+  for (const [rare, from, tier] of [[false, 'chest', 'common'], [true, 'rarechest', 'uncommon']]) {
+    r = run(43, { both: true });
+    r.run.chest = { x: 0, y: 0, w: 0, h: 0, rare, open: true };
+    finishRoom(r);
+    assert.equal(r.run.map.teamFrom, from);
+    assert.equal(r.run.map.shared.options.length, 2);
+    for (const id of r.run.map.shared.options) assert.equal(tierOf(id), tier);
+  }
+  r = run(44, { both: true });
+  r.run.stage = C.STAGES.indexOf('boss1');
+  C.onComplete(r);
+  assert.equal(r.run.map.teamFrom, 'boss');
+  for (const id of r.run.map.shared.options) assert.equal(tierOf(id), 'rare');
+});
+
+test('fake chests: solid, bite when you walk into them, Keen Eye makes them harmless', () => {
+  for (const keen of [false, true]) {
+    const r = run(45);
+    arena(r, ['##########', '#........#', '#........#', '#........#', '#F.....Wfw', '##########']);
+    r.enemySpecs = [{ type: 'mimic', chest: true, rare: false, x: 4 * T + 2, y: 5 * T - 16, w: 20, h: 16 }];
+    C.onAttempt(r);
+    if (keen) C.grant(r, 'keeneye', null);
+    const f = r.players.fire.body;
+    Object.assign(f, { x: 4 * T + 2 - P.CHAR.width - 0.5, y: 5 * T - P.CHAR.height });
+    for (let i = 0; i < 20 && r.phase === 'playing'; i++) { seq++; g.queueInput(r, 'fire', { s: seq, d: 1, j: false }); g.queueInput(r, 'water', { s: seq, d: 0, j: false }); r.run.started = true; g.step(r); }
+    assert.ok(f.x + P.CHAR.width <= 4 * T + 2 + 0.01, 'it blocks like a box');
+    assert.equal(r.phase, keen ? 'playing' : 'dead', keen ? 'Keen Eye' : 'bitten');
+  }
+});
+
+test('Umbrellas: rain, drought and bombs can\'t hurt you (the acid flood still can)', () => {
+  for (const umbrella of [false, true]) {
+    for (const kind of ['rain', 'drought', 'bomb']) {
+      const r = run(46);
+      arena(r, ['##########', '#........#', '#........#', '#........#', '#F.....Wfw', '##########']);
+      r.enemySpecs = []; C.onAttempt(r);
+      if (umbrella) C.grant(r, 'umbrella', null);
+      const victim = kind === 'drought' ? r.players.water.body : r.players.fire.body;
+      if (kind === 'bomb') r.run.shots.push({ x: victim.x + 5, y: victim.y + 5, vx: 0, vy: 0, g: 0, kind: 'bomb' });
+      else r.run.weather = { kind, state: 'strike', t: 0, dur: 5, level: r.level.pxHeight };
+      r.weatherDef = { rand: () => 0.5 };
+      tick(r, 2);
+      assert.equal(r.phase, umbrella ? 'playing' : 'dead', `${kind}, umbrella ${umbrella}`);
+    }
+  }
+});
+
+test('Catch Your Breath: +1 heart after each room; Lifesteal: ~30% chance of a heart per kill', () => {
+  let r = run(47, { both: true });
+  C.grant(r, 'rest', null);
+  r.run.hearts = 3;
+  finishRoom(r);
+  assert.equal(r.run.hearts, 4);
+  r = run(48);
+  C.grant(r, 'lifesteal', null);
+  let got = 0;
+  for (let k = 0; k < 400; k++) { r.run.hearts = 1; C.kill(r, {}); got += r.run.hearts - 1; }
+  assert.ok(got / 400 > 0.22 && got / 400 < 0.38, `${got}/400`);
+});
+
+test('Dash: shoots you ~4 tiles forward in a straight line, over a 3-tile gap', () => {
+  const r = run(49);
+  arena(r, ['############', '#..........#', '#W.........#', '#F.......fw#', '###...######', '############']);
+  r.players.water.body = P.createBody(r.level.spawns.fire); // out of the way
+  r.enemySpecs = []; C.onAttempt(r);
+  C.grant(r, 'dash', 'fire');
+  const f = r.players.fire.body;
+  Object.assign(f, { x: 2 * T + 2, y: 4 * T - P.CHAR.height, facing: 1 });
+  tick(r, 3);
+  assert.equal(C.use(r, 'fire'), true);
+  assert.equal(C.use(r, 'fire'), false, 'cooldown');
+  const x0 = f.x;
+  tick(r, 30);
+  assert.ok(f.x - x0 > 3.5 * T, `moved ${(f.x - x0) / T} tiles`);
+  assert.ok(f.onGround && f.y + P.CHAR.height <= 4 * T + 0.01, 'landed on the far side');
+  assert.equal(r.phase, 'playing');
 });

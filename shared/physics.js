@@ -26,6 +26,8 @@
 
   const FAN = { speed: 260, accel: 2600 }; // fans push up toward -speed
   const FLY = { speed: 110, accel: 1500 };  // Wings: a gentle rise while flying
+  // Dash: a straight, gravity-free burst; 600 px/s for 0.16 s = 96 px = 4 tiles
+  const DASH = { speed: 600, time: 0.16 };
 
   /*
    * Optional per-character modifiers (Challenge mode powers), stored on the body so the
@@ -34,6 +36,7 @@
    *   speedMul      run speed multiplier (Swift)
    *   maxAirJumps   extra jumps in the air (Double jump); airJumps counts what's left
    *   flyT          seconds of flight left (Wings)
+   *   dashT         seconds of dash left (Dash), in direction dashDir (-1 or 1)
    *   acidImmune    acid doesn't kill (Acid skin)
    *   magnet        extra pickup reach for stars, in pixels (Magnet)
    *   phase         passes through boxes, gates, platforms, mimics and other characters
@@ -307,6 +310,12 @@
     } else {
       body.vx = approach(body.vx, 0, (body.onGround ? CHAR.friction : CHAR.airAccel * 0.5) * dt);
     }
+    const dashing = body.dashT > 0;
+    if (dashing) {
+      body.dashT = Math.max(0, body.dashT - dt);
+      // full speed while it lasts, then back to running speed
+      body.vx = body.dashDir * (body.dashT > 0 ? DASH.speed : cap);
+    }
 
     body.coyoteT = body.onGround ? CHAR.coyote : Math.max(0, body.coyoteT - dt);
     if (body.onGround) body.airJumps = body.maxAirJumps || 0;
@@ -323,18 +332,24 @@
     }
     body.bufferT = Math.max(0, body.bufferT - dt);
 
-    if (body.flyT > 0) {
+    if (dashing) body.vy = 0; // straight line: no gravity
+    else if (body.flyT > 0) {
       body.flyT = Math.max(0, body.flyT - dt);
       body.vy = approach(body.vy, -FLY.speed, FLY.accel * dt);
     } else if (touchesTile(level, rectOf(body), T.FAN) || inGeyser(state, rectOf(body))) body.vy = approach(body.vy, -FAN.speed, FAN.accel * dt);
     else body.vy = Math.min(body.vy + CHAR.gravity * dt, CHAR.maxFall);
 
-    const bodies = others.filter((o) => !o.phase).concat(state && state.boxes ? state.boxes : []);
-    const mx = moveAxis(level, body, 'x', body.vx * dt, bodies, state, true);
+    // Characters pass through each other sideways and from below; the only contact is
+    // landing on the other's head (a one-way platform: you must start above it).
+    const boxes = state && state.boxes ? state.boxes : [];
+    const mx = moveAxis(level, body, 'x', body.vx * dt, boxes, state, true);
     body.pushing = mx.pushed;
     if (mx.pushed) body.vx = Math.max(-CHAR.pushSpeed, Math.min(CHAR.pushSpeed, body.vx));
     else if (mx.hit) body.vx = 0;
-    const my = moveAxis(level, body, 'y', body.vy * dt, bodies, state, false);
+    if (mx.hit || mx.pushed) body.dashT = 0; // a wall or box ends a dash
+    const feet = body.y + CHAR.height;
+    const heads = body.vy > 0 ? others.filter((o) => !o.phase && feet <= o.y + EPS) : [];
+    const my = moveAxis(level, body, 'y', body.vy * dt, boxes.concat(heads), state, false);
     body.onGround = my.hit && body.vy > 0;
     if (my.hit) body.vy = 0;
   }
@@ -497,7 +512,7 @@
   }
 
   return {
-    TILE, DT, CHAR, FAN, FLY, BOX, PULLEY, T,
+    TILE, DT, CHAR, FAN, FLY, DASH, BOX, PULLEY, T,
     parseLevel, tileAt, isSolid, isDeadly, createLevelState, cloneState, createBody, pressJump,
     stepBody, stepWorld, stepEnv, updateMechanisms, platformRects, hazardUnder, collectGems, atExit, doorRect,
   };

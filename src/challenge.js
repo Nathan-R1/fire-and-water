@@ -31,6 +31,14 @@ const BURROW = { hideMin: 5, hideMax: 10, warn: 2, out: 0.6, radius: 1.5 * 24 };
 const MIMIC = { shakeEvery: 5, shake: 0.6 };                                       // a box that stabs
 const CHARGER = { size: 22, sight: 6 * 24, height: 1.5 * 24, charge: 1.6, back: 0.35, maxRun: 10 * 24, tired: 5, minRun: 5 };
 const SHOOTER = { period: 1.6, speed: 200, size: 10 };
+// Chests (rooms 2–4 and 6–9): half the rooms have one. Open it (touch it) to get a
+// team bonus after the room: common, or uncommon from a rare chest. Rare chests are
+// usually high up on a little platform of their own. Neither has to be reachable.
+const CHEST = { chance: 0.5, rare: 0.1, rarePlatform: 0.7, w: 20, h: 16 };
+// Fake chests (same rooms): mimics that look like a chest. Rolled separately from the
+// real chest, so a room can have either, both or neither.
+const FAKE_CHEST = { chance: 0.25 };
+const LIFESTEAL = 0.3; // chance of a heart per enemy destroyed
 // Boss 1 has three arenas (picked at random per run); boss 2 has one.
 const BOSS_DEFS = {
   boss1: [require('../levels/boss-1.json'), require('../levels/boss-1b.json'), require('../levels/boss-1c.json')],
@@ -81,6 +89,8 @@ function createRun(seed = (Math.random() * 2 ** 32) >>> 0) {
     enemies: [],
     shots: [],
     acid: null,                      // { next, countdown, burning }
+    chest: null,                     // this room's chest: { x, y, w, h, rare, open }
+    solidUsed: { fire: false, water: false }, // Solidify: first own pool this attempt done
   };
 }
 
@@ -175,6 +185,68 @@ function poolCorners(level, el) {
   }
   return out;
 }
+
+// ── Chests ──
+
+const hasChests = (run) => STAGES[run.stage] === 'room' && run.stage !== 0; // rooms 2–4, 6–9
+
+// Tiles to keep clear of: spawns, exits and machinery.
+function busyTiles(level) {
+  const sp = (s) => ({ tx: Math.floor((s.x + 10) / T), ty: Math.floor((s.y + 29) / T) });
+  const out = [];
+  for (const el of ROLES) { out.push({ ...sp(level.spawns[el]), r: 3 }, { ...level.exits[el], r: 3 }); }
+  for (const o of [...level.plates, ...level.levers, ...level.boxes, ...level.gems]) out.push({ tx: o.tx, ty: o.ty, r: 1 });
+  for (const g of level.gates) for (let y = g.ty; y < g.ty + g.th; y++) for (let x = g.tx; x < g.tx + g.tw; x++) out.push({ tx: x, ty: y, r: 1 });
+  return out;
+}
+const nearBusy = (busy, x, y) => busy.some((b) => Math.abs(b.tx - x) <= b.r && Math.abs(b.ty - y) <= b.r);
+
+// A rare chest's own platform: 3 tiles of rock high in open air, with 2 clear tiles all
+// round and 3 above, away from pulley shafts. Picked from the highest rows that have
+// room. Returns { def, chest } or null.
+function chestPlatform(run, def) {
+  const level = P.parseLevel(def);
+  const empty = (x, y) => P.tileAt(level, x, y) === P.T.EMPTY;
+  const shafts = new Set();
+  for (const p of level.pulleys) for (const s of [p.a, p.b]) for (let i = -1; i <= p.tw; i++) shafts.add(s.tx + i);
+  const busy = busyTiles(level);
+  const spots = [];
+  for (let y = 4; y <= Math.floor(level.height / 2); y++) {
+    for (let x = 3; x + 5 < level.width - 1; x++) {
+      let ok = true;
+      for (let yy = y - 3; yy <= y + 2 && ok; yy++) for (let xx = x - 2; xx <= x + 4 && ok; xx++) {
+        if (!empty(xx, yy) || shafts.has(xx) || nearBusy(busy, xx, yy)) ok = false;
+      }
+      if (ok) spots.push({ x, y });
+    }
+  }
+  if (!spots.length) return null;
+  const top = Math.min(...spots.map((s) => s.y));
+  const high = spots.filter((s) => s.y <= top + 2);
+  const at = high[Math.floor(run.rand() * high.length)];
+  const rows = def.rows.slice();
+  rows[at.y] = rows[at.y].slice(0, at.x) + '###' + rows[at.y].slice(at.x + 3);
+  return { def: { ...def, rows }, chest: chestAt(at.x + 1, at.y - 1, true) };
+}
+
+// Floor for an ordinary chest: an empty tile with headroom and rock under it, away from
+// spawns, exits, machinery, stars and enemies.
+function chestFloor(run, level, enemies) {
+  const empty = (x, y) => P.tileAt(level, x, y) === P.T.EMPTY;
+  const busy = busyTiles(level);
+  const spots = [];
+  for (let y = 2; y < level.height - 1; y++) for (let x = 1; x < level.width - 1; x++) {
+    if (!empty(x, y) || !empty(x, y - 1) || !P.isSolid(level, x, y + 1) || nearBusy(busy, x, y)) continue;
+    const r = { x: (x - 2) * T, y: (y - 2) * T, w: 5 * T, h: 4 * T };
+    if (enemies.some((e) => e.x !== undefined && e.y !== undefined && overlaps(r, { x: e.x ?? e.x0, y: e.y, w: e.w || T, h: e.h || T }))) continue;
+    spots.push({ x, y });
+  }
+  if (!spots.length) return null;
+  const at = spots[Math.floor(run.rand() * spots.length)];
+  return at;
+}
+
+const chestAt = (tx, ty, rare) => ({ x: tx * T + (T - CHEST.w) / 2, y: (ty + 1) * T - CHEST.h, w: CHEST.w, h: CHEST.h, rare, open: false });
 
 function enemySpecs(run, kind, level, def = {}) {
   if (kind === 'boss1') {
@@ -342,8 +414,10 @@ function updateWeather(room, dt, hits) {
     const k = w.t < WEATHER.rise ? w.t / WEATHER.rise : w.t < WEATHER.rise + WEATHER.hold ? 1 : Math.max(0, (w.dur - w.t) / WEATHER.drain);
     w.level = bottom - k * (bottom - w.floodY);
   }
+  const umbrella = teamCount(run, 'umbrella') > 0; // rain and drought can't hurt you
   for (const r of ROLES) {
     const b = room.players[r].body;
+    if (umbrella && w.kind !== 'flood') continue;
     if (w.kind === 'drought' && r === 'water' && !onOwnPool(room.level, b, 'water')) hits.push({ role: r, cause: 'drought' });
     if (w.kind === 'rain' && r === 'fire' && !covered(room, b)) hits.push({ role: r, cause: 'rain' });
     if (w.kind === 'flood' && !b.acidImmune && b.y + P.CHAR.height > w.level + 2) hits.push({ role: r, cause: 'flood' });
@@ -404,6 +478,18 @@ function updateEnemies(room, dt) {
       room.events.push({ type: 'ward', role: r, seconds: wards });
     }
     run.inElement[r] = inside;
+    // Solidify: the first pool of your own element you step into each attempt hardens
+    if (inside && !run.solidUsed[r] && run.personal[r].some((i) => i.id === 'solidify')) {
+      run.solidUsed[r] = true;
+      harden(room, room.players[r].body, r);
+      room.events.push({ type: 'solidify', role: r });
+    }
+    // Chest: either of you touching it opens it
+    const c = run.chest;
+    if (c && !c.open && overlaps(charRect(room.players[r].body), c)) {
+      c.open = true;
+      room.events.push({ type: 'chest', role: r, rare: c.rare });
+    }
   }
   for (const e of run.enemies) {
     if (e.dead) continue;
@@ -538,13 +624,14 @@ function updateEnemies(room, dt) {
           const level = b.y + P.CHAR.height > er.y + 2 && b.y < er.y + er.h;
           const pushRight = p.input.right && Math.abs(b.x + P.CHAR.width - er.x) < 1.5;
           const pushLeft = p.input.left && Math.abs(b.x - (er.x + er.w)) < 1.5;
-          if (level && (pushRight || pushLeft)) { hits.push({ role: r, cause: 'mimic' }); break; }
+          if (level && (pushRight || pushLeft)) { hits.push({ role: r, cause: e.chest ? 'fakechest' : 'mimic' }); break; }
           continue;
         }
         if (overlaps(cr, shrink(liveRect(e), 2))) { hits.push({ role: r, cause: e.type }); break; }
       }
     }
-    for (const sh of run.shots) if (overlaps(cr, { x: sh.x, y: sh.y, w: SHOOTER.size, h: SHOOTER.size })) { hits.push({ role: r, cause: sh.kind === 'bomb' ? 'bomb' : 'shot' }); break; }
+    const umbrella = teamCount(run, 'umbrella') > 0; // bombs bounce off umbrellas
+    for (const sh of run.shots) if (!(umbrella && sh.kind === 'bomb') && overlaps(cr, { x: sh.x, y: sh.y, w: SHOOTER.size, h: SHOOTER.size })) { hits.push({ role: r, cause: sh.kind === 'bomb' ? 'bomb' : 'shot' }); break; }
   }
   return hits;
 }
@@ -719,15 +806,24 @@ function toStart(room, role) {
 
 const killable = (e) => ['sentry', 'patrol', 'mimic', 'burrower'].includes(e.type);
 function kill(room, e) {
+  const run = room.run;
   e.dead = true;
   if (e.block) room.state.blocks = room.state.blocks.filter((b) => b !== e.block);
+  if (teamCount(run, 'lifesteal') && run.rand() < LIFESTEAL) heal(room, 1, 'lifesteal');
+}
+
+function heal(room, n, source) {
+  const run = room.run;
+  const before = run.hearts;
+  run.hearts = Math.min(run.maxHearts, run.hearts + n);
+  if (run.hearts > before) room.events.push({ type: 'heal', source, hearts: run.hearts - before });
 }
 
 const allItems = (run) => run.items.concat(run.personal.fire, run.personal.water);
 const ownedIds = (run, role) => run.personal[role].map((i) => i.id);
 
 function bodyMods(run, role) {
-  return { ...B.mods(ownedIds(run, role)), flyT: 0, airJumps: 0, phase: false };
+  return { ...B.mods(ownedIds(run, role)), flyT: 0, dashT: 0, airJumps: 0, phase: false };
 }
 
 // Called at the start of every attempt (room load, restart, after a death).
@@ -742,6 +838,8 @@ function onAttempt(room) {
   run.ghostFailed = null;
   run.lastChanceUsed = false;
   run.prevFeet = {};
+  run.solidUsed = { fire: false, water: false };
+  if (run.chest) run.chest.open = false; // like stars: open it again after a restart
   room.resetRequested = false;
   for (const it of allItems(run)) { if (!it.spent) it.ready = true; it.coolT = 0; } // once-per-room items recharge
   for (const r of ROLES) Object.assign(room.players[r].body, bodyMods(run, r));
@@ -765,9 +863,27 @@ function loadStage(room, load) {
     label = `Boss ${kind === 'boss1' ? 1 : 2}`;
   }
   if (run.stage > 0) def = withPools(def); // room 1 stays an exact copy
+  run.chest = null;
+  let chest = null; // 'common' | 'rare' | a placed rare chest
+  if (hasChests(run) && run.rand() < CHEST.chance) {
+    chest = run.rand() < CHEST.rare ? 'rare' : 'common';
+    if (chest === 'rare' && run.rand() < CHEST.rarePlatform) {
+      const placed = chestPlatform(run, def);
+      if (placed) { def = placed.def; chest = placed.chest; }
+    }
+  }
   room.enemySpecs = [];
   load(def, { index: run.stage, total: STAGES.length, label });
   room.enemySpecs = enemySpecs(run, kind, room.level, def);
+  if (typeof chest === 'string') {
+    const at = chestFloor(run, room.level, room.enemySpecs);
+    if (at) run.chest = chestAt(at.x, at.y, chest === 'rare');
+  } else run.chest = chest;
+  if (hasChests(run) && run.rand() < FAKE_CHEST.chance) {
+    const rare = run.rand() < CHEST.rare; // looks rare as often as a real one is
+    const at = chestFloor(run, room.level, room.enemySpecs.concat(run.chest ? [run.chest] : []));
+    if (at) room.enemySpecs.push({ type: 'mimic', chest: true, rare, ...chestAt(at.x, at.y, rare), open: undefined });
+  }
   room.weatherDef = rollWeather(run, def);
   onAttempt(room);
 }
@@ -781,10 +897,21 @@ function start(room, load) {
 // uncommon with a chance equal to the share of stars collected (falls back to common
 // if there's nothing uncommon left). After a boss, everything is rare.
 function offer(run, scope, n, exclude, uncommonChance, boss) {
+  return offerFrom(run, scope, n, exclude, () => (boss ? ['rare'] : run.rand() < uncommonChance ? ['uncommon', 'common'] : ['common']));
+}
+
+// Team bonuses come in a fixed tier (chest common, rare chest uncommon, boss rare),
+// dropping a tier when there's nothing left to offer in it.
+const TEAM_TIERS = { common: ['common'], uncommon: ['uncommon', 'common'], rare: ['rare', 'uncommon', 'common'] };
+function offerTeam(run, n, exclude, tier) {
+  return offerFrom(run, 'team', n, exclude, () => TEAM_TIERS[tier]);
+}
+
+function offerFrom(run, scope, n, exclude, tiersFor) {
   const avail = (rarity) => B.pool(scope, rarity).filter((b) => !exclude.has(b.id));
   const out = [];
   for (let k = 0; k < n; k++) {
-    const tiers = boss ? ['rare'] : run.rand() < uncommonChance ? ['uncommon', 'common'] : ['common'];
+    const tiers = tiersFor();
     for (const tier of tiers) {
       const left = avail(tier).filter((b) => !out.includes(b.id));
       if (left.length) { out.push(left[Math.floor(run.rand() * left.length)].id); break; }
@@ -803,6 +930,10 @@ function onComplete(room) {
     return;
   }
   const boss = stageKind(run) !== 'room';
+  if (teamCount(run, 'rest')) heal(room, 1, 'rest');
+  // Team bonuses only from a boss or an opened chest.
+  const teamFrom = boss ? 'boss' : run.chest && run.chest.open ? (run.chest.rare ? 'rarechest' : 'chest') : null;
+  const teamTier = { boss: 'rare', rarechest: 'uncommon', chest: 'common' }[teamFrom];
   const total = room.level.gems.length;
   const stars = room.state.gems.filter(Boolean).length;
   const chance = total ? Math.min(1, stars / total) : 0;
@@ -824,7 +955,8 @@ function onComplete(room) {
     rarity: boss ? 'rare' : 'common',
     uncommonChance: boss ? 0 : chance,
     step: 'shared',
-    shared: { options: offer(run, 'team', 2, teamOwned, chance, boss), votes: {} },
+    teamFrom,
+    shared: { options: teamTier ? offerTeam(run, 2, teamOwned, teamTier) : [], votes: {} },
     rps: null,
     personal: { options: personal, picks: {} },
   };
@@ -966,6 +1098,23 @@ function boxSpot(room, body) {
   return null;
 }
 
+// Solidify: harden the whole connected pool of your element under your feet.
+function harden(room, me, role) {
+  const own = role === 'fire' ? P.T.LAVA : P.T.WATER;
+  const ty = Math.round((me.y + P.CHAR.height) / T);
+  const start = [];
+  for (let tx = Math.floor((me.x + 4) / T); tx <= Math.floor((me.x + P.CHAR.width - 4) / T); tx++) if (P.tileAt(room.level, tx, ty) === own) start.push([tx, ty]);
+  const seen = new Set(room.state.safePools);
+  while (start.length) {
+    const [x, y] = start.pop();
+    const k = `${x},${y}`;
+    if (seen.has(k) || P.tileAt(room.level, x, y) !== own) continue;
+    seen.add(k);
+    start.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+  room.state.safePools = [...seen];
+}
+
 // The ✦ button (or the second one, with Dual Wield): use the equipped item.
 function use(room, role, slot = 1) {
   const run = room.run;
@@ -1030,24 +1179,9 @@ function use(room, role, slot = 1) {
     case 'shield': run.effects[role].shieldT = b.duration; break;
     case 'wings': me.flyT = b.duration; break;
     case 'phase': me.phase = !me.phase; break;
-    case 'solidify': {
-      if (!onOwnPool(room.level, me, role)) return false;
-      const own = role === 'fire' ? P.T.LAVA : P.T.WATER;
-      // the whole connected pool under your feet hardens
-      const ty = Math.round((me.y + P.CHAR.height) / T);
-      const start = [];
-      for (let tx = Math.floor((me.x + 4) / T); tx <= Math.floor((me.x + P.CHAR.width - 4) / T); tx++) if (P.tileAt(room.level, tx, ty) === own) start.push([tx, ty]);
-      const seen = new Set(room.state.safePools);
-      while (start.length) {
-        const [x, y] = start.pop();
-        const k = `${x},${y}`;
-        if (seen.has(k) || P.tileAt(room.level, x, y) !== own) continue;
-        seen.add(k);
-        start.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
-      }
-      room.state.safePools = [...seen];
+    case 'dash':
+      me.dashT = P.DASH.time; me.dashDir = me.facing || 1;
       break;
-    }
     default: return false;
   }
   if (b.uses === 'combat') it.ready = false;
@@ -1079,9 +1213,12 @@ function view(room) {
     locked: { fire: !!exclusiveOf(run, 'fire'), water: !!exclusiveOf(run, 'water') },
     ghost: run.ghost,
     keenEye: teamCount(run, 'keeneye') > 0,
+    umbrella: teamCount(run, 'umbrella') > 0,
+    chest: run.chest && { x: run.chest.x, y: run.chest.y, w: run.chest.w, h: run.chest.h, rare: run.chest.rare, open: run.chest.open },
     effects: run.effects,
     map: run.map && {
       rarity: run.map.rarity,
+      teamFrom: run.map.teamFrom,
       uncommonChance: run.map.uncommonChance,
       step: run.map.step,
       shared: run.map.shared,
@@ -1095,6 +1232,7 @@ function view(room) {
       const r = liveRect(e);
       return {
         type: e.type, x: r.x, y: r.y, w: r.w, h: r.h, stun: e.stunT > 0,
+        chest: !!e.chest, rare: !!e.rare,
         phase: e.phase, shake: e.type === 'mimic' && e.shakeT > MIMIC.shakeEvery - MIMIC.shake, mode: e.mode, dir: e.dir,
       };
     }),
@@ -1107,5 +1245,5 @@ function view(room) {
 
 module.exports = {
   STAGES, HEARTS, ACID, WEATHER, weatherOptions, withPools, createRun, start, loadStage, onAttempt, onComplete, updateEnemies, absorb,
-  act, equip, use, view, grant, sentrySpots, enemySpecs, rng, offer,
+  act, equip, use, view, grant, sentrySpots, enemySpecs, rng, offer, offerTeam, kill, CHEST,
 };

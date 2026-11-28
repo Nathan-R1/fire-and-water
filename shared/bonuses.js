@@ -6,8 +6,9 @@
 //           'personal' belongs to the player who picked it; never in the team inventory
 //   color   'yellow'   active: equip one at a time (each player separately), use with ✦
 //           'green'    passive: always on (for the team, or for its owner)
-//   rarity  'common' | 'uncommon' after normal rooms (stars raise the uncommon chance),
-//           'rare' after boss rooms
+//   rarity  personal: 'common' | 'uncommon' after normal rooms (stars raise the uncommon
+//           chance), 'rare' after boss rooms. Team: only from chests ('common'), rare
+//           chests ('uncommon') and bosses ('rare')
 //   repeat  true: keeps being offered after you have it, and copies stack
 //   exclusive  true: replaces your other actives. Once you have it it's equipped for
 //           good: you can't switch away from it or use any other active item
@@ -25,13 +26,10 @@
   const svg = (body) => `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 
   const LIST = [
-    // ── team, common ──
+    // ── team, common (from chests) ──
     { id: 'heal2', type: 'instant', scope: 'team', rarity: 'common', name: 'Heal 2',
       desc: 'The team gets 2 hearts back.',
       icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 9v6M9 12h6"/>') },
-    { id: 'guardian', type: 'item', scope: 'team', color: 'green', rarity: 'common', name: 'Guardian',
-      desc: 'Each room, the first time either of you takes damage you\'re shielded for 1 second instead: nothing can hurt you.',
-      icon: svg('<path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/>') },
     { id: 'blast', type: 'item', scope: 'team', color: 'yellow', rarity: 'common', uses: 'combat', name: 'Blast',
       desc: 'Destroys enemies and shots close to you and stuns bosses for a moment. Once per room.',
       icon: svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3"/>') },
@@ -42,8 +40,27 @@
       desc: 'An updraft bursts up where you\'re standing for 5 seconds, carrying anyone in it upwards. Once per room.',
       icon: svg('<path d="M8 21v-6M12 21V9M16 21v-6"/><path d="M9 6l3-3 3 3M6 10l2-2 2 2M14 10l2-2 2 2"/>') },
     { id: 'keeneye', type: 'item', scope: 'team', color: 'green', rarity: 'common', name: 'Keen Eye',
-      desc: 'Decoys can\'t fool you: mimic boxes show their eyes and can\'t hurt you.',
+      desc: 'Decoys can\'t fool you: mimic boxes and fake chests show their eyes and can\'t hurt you.',
       icon: svg('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>') },
+    // ── team, uncommon (from rare chests) ──
+    { id: 'guardian', type: 'item', scope: 'team', color: 'green', rarity: 'uncommon', name: 'Guardian',
+      desc: 'Each room, the first time either of you takes damage you\'re shielded for 1 second instead: nothing can hurt you.',
+      icon: svg('<path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/>') },
+    { id: 'reroll', type: 'item', scope: 'team', color: 'yellow', rarity: 'uncommon', uses: 'once', name: 'Reroll',
+      desc: 'Swaps the current room for a different one. One use for the whole team. Not in boss rooms.',
+      icon: svg('<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="15" r="1"/><circle cx="15" cy="9" r="1"/><circle cx="9" cy="15" r="1"/>') },
+    { id: 'fullheal', type: 'instant', scope: 'team', rarity: 'uncommon', name: 'Second Wind',
+      desc: 'Hearts refilled to the maximum, and the maximum goes up by 1.',
+      icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 8v6M9.5 10.5L12 8l2.5 2.5"/>') },
+    { id: 'umbrella', type: 'item', scope: 'team', color: 'green', rarity: 'uncommon', name: 'Umbrellas',
+      desc: 'You both carry an umbrella: rainstorms, droughts and bombs can\'t hurt you.',
+      icon: svg('<path d="M3 12a9 9 0 0 1 18 0z"/><path d="M12 12v7a2 2 0 0 1-4 0"/>') },
+    { id: 'rest', type: 'item', scope: 'team', color: 'green', rarity: 'uncommon', name: 'Catch Your Breath',
+      desc: 'The team gets 1 heart back at the end of every room.',
+      icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 10v4"/>') },
+    { id: 'lifesteal', type: 'item', scope: 'team', color: 'green', rarity: 'uncommon', name: 'Lifesteal',
+      desc: 'Each enemy you destroy has a 30% chance of giving the team 1 heart back.',
+      icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M9 11l2 2 4-4"/>') },
     // ── team, rare (after bosses) ──
     { id: 'slowtime', type: 'item', scope: 'team', color: 'green', rarity: 'rare', repeat: true, name: 'Slow Time',
       desc: 'Enemies and their shots move 25% slower. Stacks.',
@@ -54,12 +71,6 @@
     { id: 'swap', type: 'item', scope: 'team', color: 'yellow', rarity: 'rare', uses: 'cooldown', cooldown: 1, name: 'Swap',
       desc: 'You and your partner swap places instantly. As often as you like.',
       icon: svg('<path d="M4 8h13l-3-3M20 16H7l3 3"/>') },
-    { id: 'reroll', type: 'item', scope: 'team', color: 'yellow', rarity: 'rare', uses: 'once', name: 'Reroll',
-      desc: 'Swaps the current room for a different one. One use for the whole team. Not in boss rooms.',
-      icon: svg('<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="15" r="1"/><circle cx="15" cy="9" r="1"/><circle cx="9" cy="15" r="1"/>') },
-    { id: 'fullheal', type: 'instant', scope: 'team', rarity: 'rare', name: 'Second Wind',
-      desc: 'Hearts refilled to the maximum, and the maximum goes up by 1.',
-      icon: svg('<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M12 8v6M9.5 10.5L12 8l2.5 2.5"/>') },
     // ── personal, common ──
     { id: 'spring', type: 'item', scope: 'personal', color: 'green', rarity: 'common', repeat: true, name: 'Spring',
       desc: 'You jump 15% higher. Stacks.',
@@ -76,6 +87,9 @@
     { id: 'recall', type: 'item', scope: 'personal', color: 'yellow', rarity: 'common', uses: 'combat', name: 'Recall',
       desc: 'Teleport back to your starting spot. Once per room.',
       icon: svg('<path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/><circle cx="12" cy="12" r="2"/>') },
+    { id: 'dash', type: 'item', scope: 'personal', color: 'yellow', rarity: 'common', uses: 'cooldown', cooldown: 1.5, name: 'Dash',
+      desc: 'Shoot forward about 4 tiles in a straight line, far enough to clear a medium gap. Unlimited, with 1.5 seconds between dashes.',
+      icon: svg('<path d="M14 6l6 6-6 6"/><path d="M4 12h15M4 8h6M4 16h6"/>') },
     // ── personal, uncommon (stars raise the chance) ──
     { id: 'gun', type: 'item', scope: 'personal', color: 'yellow', rarity: 'uncommon', uses: 'cooldown', cooldown: 0.35, name: 'Blaster',
       desc: 'Fires a short-range shot the way you\'re facing: destroys sentries, stuns bosses. Unlimited ammo.',
@@ -92,8 +106,8 @@
     { id: 'stomp', type: 'item', scope: 'personal', color: 'green', rarity: 'uncommon', name: 'Stomp',
       desc: 'Land on an enemy from above to destroy it (bigger ones and bosses are stunned instead) and bounce off.',
       icon: svg('<path d="M7 3h6l1 9h4v4H6z"/><path d="M4 21h16M8 18l-2 3M16 18l2 3"/>') },
-    { id: 'solidify', type: 'item', scope: 'personal', color: 'yellow', rarity: 'uncommon', uses: 'combat', name: 'Solidify',
-      desc: 'While standing in your own element, harden that whole pool so your teammate can walk on it, for the rest of the room. Once per room.',
+    { id: 'solidify', type: 'item', scope: 'personal', color: 'green', rarity: 'uncommon', name: 'Solidify',
+      desc: 'The first pool of your own element you step into each room hardens, so your teammate can walk on it, for the rest of the room.',
       icon: svg('<path d="M3 17h18M5 17l2-5h10l2 5"/><path d="M8 12l1-3h6l1 3"/>') },
     { id: 'beacon', type: 'item', scope: 'personal', color: 'yellow', rarity: 'uncommon', uses: 'combat', name: 'Beacon',
       desc: 'Teleport to your teammate. Once per room.',

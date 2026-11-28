@@ -270,7 +270,7 @@ function snapshot(room) {
       x: body.x, y: body.y, vx: body.vx, vy: body.vy,
       onGround: body.onGround, coyoteT: body.coyoteT, bufferT: body.bufferT, pushing: !!body.pushing,
       jumpMul: body.jumpMul || 1, speedMul: body.speedMul || 1, maxAirJumps: body.maxAirJumps || 0,
-      airJumps: body.airJumps || 0, flyT: body.flyT || 0, acidImmune: !!body.acidImmune, magnet: body.magnet || 0, phase: !!body.phase,
+      airJumps: body.airJumps || 0, flyT: body.flyT || 0, dashT: body.dashT || 0, dashDir: body.dashDir || 0, acidImmune: !!body.acidImmune, magnet: body.magnet || 0, phase: !!body.phase,
       ack, connected: !!socketId,
     };
   }
