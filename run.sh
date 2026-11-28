@@ -13,10 +13,12 @@ usage() {
   cat <<EOF
 Usage: ./run.sh [option]
 
-  (no option)   Start the dev server in the background on http://localhost:$PORT
+  (no option)   Show the status; start the dev server in the background on
+                http://localhost:$PORT if it isn't running
   --stop        Stop it
   --restart     Stop it, then start it again (picks up server code changes)
-  --status      Say whether it's running
+  --status      Say whether it's running, for how long, and whether server code
+                changed since it started (then it needs --restart)
   --help, -h    Show this help
 
 The server runs with DEV=1 (enables the Skip room button). It reads .env if there is
@@ -83,14 +85,61 @@ stop() {
   echo "Stopped (pid $pid)."
 }
 
+# Seconds a process has been running, from ps's elapsed time ([[dd-]hh:]mm:ss). (The
+# timestamps under /proc aren't reliable on every system, e.g. Termux/PRoot.)
+uptime_secs() {
+  local e d=0 h=0 m=0 s=0
+  e="$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' \n')"
+  [[ -n "$e" ]] || return 1
+  if [[ "$e" == *-* ]]; then d="${e%%-*}"; e="${e#*-}"; fi
+  IFS=: read -r -a parts <<< "$e"
+  case ${#parts[@]} in
+    3) h=${parts[0]}; m=${parts[1]}; s=${parts[2]} ;;
+    2) m=${parts[0]}; s=${parts[1]} ;;
+    *) return 1 ;;
+  esac
+  echo $(( 10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s ))
+}
+
+# 75 -> "1m 15s", 7300 -> "2h 1m", 90000 -> "1d 1h"
+human() {
+  local t=$1
+  if (( t < 60 )); then echo "${t}s"
+  elif (( t < 3600 )); then echo "$(( t / 60 ))m $(( t % 60 ))s"
+  elif (( t < 86400 )); then echo "$(( t / 3600 ))h $(( t % 3600 / 60 ))m"
+  else echo "$(( t / 86400 ))d $(( t % 86400 / 3600 ))h"; fi
+}
+
+# Server-side files changed after epoch second $1. Files in public/ are served fresh on
+# every load, but these only take effect after a restart.
+changed_since() {
+  # (a pipe, not < <(…): there's no /dev/fd under Termux/PRoot)
+  # (|| true: a missing .env makes find fail, which pipefail would turn into an exit)
+  { find "$DIR/server.js" "$DIR/src" "$DIR/shared" "$DIR/levels" "$DIR/.env" -type f -print0 2>/dev/null || true; } |
+    while IFS= read -r -d '' f; do
+      if (( $(stat -c %Y "$f") > $1 + 1 )); then echo "${f#"$DIR"/}"; fi
+    done
+}
+
+# Prints the status; returns 1 if the server isn't running.
 status() {
-  local pid
+  local pid up changed
   pid="$(server_pid)"
-  if [[ -n "$pid" ]]; then echo "Running (pid $pid) on http://localhost:$PORT"; else echo "Not running."; fi
+  if [[ -z "$pid" ]]; then echo "Not running."; return 1; fi
+  if ! up="$(uptime_secs "$pid")"; then echo "Running (pid $pid) on http://localhost:$PORT"; return 0; fi
+  echo "Running (pid $pid) on http://localhost:$PORT, up $(human "$up")"
+  changed="$(changed_since $(( $(date +%s) - up )))"
+  if [[ -n "$changed" ]]; then
+    echo "Server code changed since it started; ./run.sh --restart to load it:"
+    echo "$changed" | head -n 8 | sed 's/^/  /'
+    local n; n="$(echo "$changed" | wc -l)"
+    (( n > 8 )) && echo "  …and $(( n - 8 )) more"
+  fi
+  return 0
 }
 
 case "${1:-}" in
-  "") start ;;
+  "") if status; then echo "Use ./run.sh --restart to restart it, or --stop to stop it."; else start; fi ;;
   --stop) stop ;;
   --restart) stop; start ;;
   --status) status ;;

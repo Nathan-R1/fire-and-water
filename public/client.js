@@ -493,6 +493,7 @@
   let clockSamples = []; // [arrival time, arrival time - server time]
   let clockOff = null;   // our clock minus the server's, for the least-delayed snapshot
   function noteClock(st, t) {
+    if (!Number.isFinite(st)) return; // a server from before step stamps: snapPair falls back
     const off = t - st * STEP_MS;
     clockSamples.push([t, off]);
     while (clockSamples[0][0] < t - 3000) clockSamples.shift();
@@ -507,6 +508,7 @@
   function snapPair(now) {
     const ms = now - clockOff - INTERP_MS;
     const last = snaps[snaps.length - 1].s;
+    if (clockOff === null || !Number.isFinite(ms) || !Number.isFinite(last.st)) return { a: last, b: last, k: 0 };
     if (ms >= last.st * STEP_MS) return { a: last, b: last, k: 0 }; // late snapshot: hold
     for (let i = snaps.length - 1; i > 0; i--) {
       const a = snaps[i - 1].s, b = snaps[i].s;
