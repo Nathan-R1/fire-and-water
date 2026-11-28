@@ -5,30 +5,24 @@
 
 const P = require('../shared/physics');
 const B = require('../shared/bonuses');
+const E = require('../shared/enemies');
 
 const ROLES = ['fire', 'water'];
 const STAGES = ['room', 'room', 'room', 'room', 'boss1', 'room', 'room', 'room', 'room', 'boss2'];
 const HEARTS = { start: 5, max: 8 };
 const GUARDIAN_SECONDS = 1;          // Guardian: shielded after your first hit each room
 const LAST_CHANCE_SECONDS = 5;      // Last Chance: seconds to get back to the start
-// Boss 2's acid floor: a 3 s countdown, then all ground burns for 0.1 s. A jump keeps you
-// in the air ~0.62 s, so you have about half a second in which to jump.
-const ACID = { period: 9, countdown: 3, burn: 0.1, firstAt: 4 };
-// Weather (rooms 6–10): after 10–20 s, then again 10–20 s after each one ends, a 5 s
-// lead-in, then the strike. Drought: water must be in a water pool. Rainstorm: fire
-// must be under cover. Acid flood: the bottom of the room fills with acid (rise, 5 s,
-// drain); get above it. Times are in real seconds (Slow Time doesn't slow weather).
-const WEATHER = {
-  firstMin: 10, firstMax: 20, gapMin: 10, gapMax: 20, lead: 5,
-  drought: 0.5, rain: 1, rise: 1.5, hold: 5, drain: 1,
-  depth: 2, // the flood rises this many tiles above the lowest floor you can stand on
-};
+// The acid floor, weather clock and mimic timings live in shared/enemies.js (the client
+// predicts them too). Boss 2's acid: a 3 s countdown, then all ground burns for 0.1 s; a
+// jump keeps you in the air ~0.62 s, so you have about half a second in which to jump.
+// Weather: drought (water must be in a water pool), rainstorm (fire must be under cover),
+// acid flood (get above it).
+const { ACID, WEATHER, MIMIC } = E;
 const GUN = { speed: 480, range: 5 * 24, size: 8 };
 const PATROL = { size: 20, speed: 45, minRun: 3 };          // walkers pacing along platforms
 const BOMBER = { w: 30, h: 18, speed: 80, cooldown: 1.2, gravity: 900, size: 10 };
 // Rooms 6–9 only:
 const BURROW = { hideMin: 5, hideMax: 10, warn: 2, out: 0.6, radius: 1.5 * 24 };  // hides, cracks, bursts
-const MIMIC = { shakeEvery: 5, shake: 0.6 };                                       // a box that stabs
 const CHARGER = { size: 22, sight: 6 * 24, height: 1.5 * 24, charge: 1.6, back: 0.35, maxRun: 10 * 24, tired: 5, minRun: 5 };
 const SHOOTER = { period: 1.6, speed: 200, size: 10 };
 // Chests (rooms 2–4 and 6–9): half the rooms have one. Open it (touch it) to get a
@@ -400,20 +394,9 @@ const covered = (room, b) => blockedRects(room, { x: b.x + P.CHAR.width / 2 - 4,
 function updateWeather(room, dt, hits) {
   const run = room.run, w = run.weather;
   if (!w) return;
-  w.t += dt;
-  const bottom = room.level.pxHeight - T;
-  const next = (state, dur) => { w.state = state; w.t = 0; w.dur = dur; };
-  if (w.t >= w.dur) {
-    if (w.state === 'idle') { next('lead', WEATHER.lead); room.events.push({ type: 'weather', kind: w.kind }); }
-    else if (w.state === 'lead') next('strike', w.kind === 'flood' ? WEATHER.rise + WEATHER.hold + WEATHER.drain : WEATHER[w.kind]);
-    else next('idle', WEATHER.gapMin + room.weatherDef.rand() * (WEATHER.gapMax - WEATHER.gapMin));
-  }
-  w.level = room.level.pxHeight;
+  const gap = () => WEATHER.gapMin + room.weatherDef.rand() * (WEATHER.gapMax - WEATHER.gapMin);
+  if (E.stepWeather(w, dt, room.level.pxHeight, gap) === 'lead') room.events.push({ type: 'weather', kind: w.kind });
   if (w.state !== 'strike') return;
-  if (w.kind === 'flood') {
-    const k = w.t < WEATHER.rise ? w.t / WEATHER.rise : w.t < WEATHER.rise + WEATHER.hold ? 1 : Math.max(0, (w.dur - w.t) / WEATHER.drain);
-    w.level = bottom - k * (bottom - w.floodY);
-  }
   const umbrella = teamCount(run, 'umbrella') > 0; // rain and drought can't hurt you
   for (const r of ROLES) {
     const b = room.players[r].body;
@@ -432,7 +415,8 @@ function resetEnemies(room) {
   run.shots = [];
   run.bullets = [];
   run.acid = null;
-  run.enemies = room.enemySpecs.filter((e) => e.type !== 'acid').map((e) => ({ ...e, stunT: 0, dead: false, dir: 1, x: e.x ?? e.x0, size: e.size0, yNow: e.y }));
+  run.enemies = room.enemySpecs.filter((e) => e.type !== 'acid').map((e, i) => ({ ...e, id: i, stunT: 0, dead: false, dir: 1, x: e.x ?? e.x0, size: e.size0, yNow: e.y }));
+  run.shotId = 0;
   room.state.blocks = [];
   for (const e of run.enemies) {
     if (e.type === 'mimic') { e.block = { x: e.x, y: e.y, w: e.w, h: e.h }; room.state.blocks.push(e.block); e.shakeT = run.rand() * MIMIC.shakeEvery; }
@@ -449,10 +433,7 @@ const shrink = (r, by) => ({ x: r.x + by, y: r.y + by, w: r.w - 2 * by, h: r.h -
 const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 const charRect = (b) => ({ x: b.x, y: b.y, w: P.CHAR.width, h: P.CHAR.height });
 
-function enemyRect(e) {
-  if (e.type === 'walker') return { x: e.x, y: e.floor - e.size, w: e.size, h: e.size };
-  return { x: e.x, y: e.y, w: e.w, h: e.h };
-}
+const { enemyRect, liveRect } = E;
 
 // Advance enemies one tick. Returns the roles hit this tick: [{ role, cause }].
 function updateEnemies(room, dt) {
@@ -493,22 +474,9 @@ function updateEnemies(room, dt) {
   }
   for (const e of run.enemies) {
     if (e.dead) continue;
-    if (e.stunT > 0) { e.stunT -= dt; continue; }
-    if (e.type === 'flyer') {
-      e.x += e.dir * e.speed * dt;
-      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
-      e.yNow = e.y + Math.sin(run.time * 1.7) * e.amp; // e.y is the centre line
-    } else if (e.type === 'walker') {
-      e.size = e.size0 + (e.size1 - e.size0) * Math.min(1, run.time / e.grow);
-      walk(room, e, dt);
-      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x + e.size > e.x1) { e.x = e.x1 - e.size; e.dir = -1; }
-    } else if (e.type === 'patrol') {
-      walk(room, e, dt);
-      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
-    } else if (e.type === 'bomber') {
-      e.x += e.dir * e.speed * dt;
-      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; } else if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
-      e.cool = Math.max(0, (e.cool ?? 0) - dt);
+    // fixed-rule movement (shared with the client's prediction); false while stunned
+    if (!E.move(e, dt, run.time, room.level, room.state)) continue;
+    if (e.type === 'bomber') {
       const cx = e.x + e.w / 2;
       const below = ROLES.filter((r) => !cloaked(r)).some((r) => {
         const b = room.players[r].body;
@@ -516,7 +484,7 @@ function updateEnemies(room, dt) {
       });
       if (below && e.cool === 0) {
         e.cool = BOMBER.cooldown;
-        run.shots.push({ x: cx - BOMBER.size / 2, y: e.y + e.h, vx: 0, vy: 40, g: BOMBER.gravity, kind: 'bomb' });
+        run.shots.push({ id: ++run.shotId, x: cx - BOMBER.size / 2, y: e.y + e.h, vx: 0, vy: 40, g: BOMBER.gravity, kind: 'bomb' });
       }
     } else if (e.type === 'burrower') {
       e.t -= dt;
@@ -534,8 +502,6 @@ function updateEnemies(room, dt) {
       } else if (e.phase === 'out' && e.t <= 0) {
         e.phase = 'hidden'; e.t = BURROW.hideMin + run.rand() * (BURROW.hideMax - BURROW.hideMin);
       }
-    } else if (e.type === 'mimic') {
-      e.shakeT = (e.shakeT + dt) % MIMIC.shakeEvery;
     } else if (e.type === 'charger') {
       stepCharger(room, e, dt, cloaked);
     } else if (e.type === 'shooter') {
@@ -549,28 +515,15 @@ function updateEnemies(room, dt) {
         if (targets.length) {
           const t = targets[0].b;
           const dx = t.x + 10 - cx, dy = t.y + 15 - cy, d = Math.hypot(dx, dy) || 1;
-          run.shots.push({ x: cx - SHOOTER.size / 2, y: cy, vx: (dx / d) * SHOOTER.speed, vy: (dy / d) * SHOOTER.speed });
+          run.shots.push({ id: ++run.shotId, x: cx - SHOOTER.size / 2, y: cy, vx: (dx / d) * SHOOTER.speed, vy: (dy / d) * SHOOTER.speed });
         }
       }
     }
   }
-  // Enemy shots and bombs stop at anything solid: rock, boxes, mimics, closed gates,
-  // pulley platforms. The check covers the whole distance moved, so a fast bomb can't
-  // skip through a thin platform.
-  const hitsSolid = (x0, y0, x1, y1, size) => blockedRects(room, {
-    x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0) + size, h: Math.abs(y1 - y0) + size,
-  }).length > 0;
-  run.shots = run.shots.filter((sh) => {
-    if (sh.g) sh.vy += sh.g * dt; // bombs fall
-    const x0 = sh.x, y0 = sh.y;
-    sh.x += sh.vx * dt; sh.y += sh.vy * dt;
-    return !hitsSolid(x0, y0, sh.x, sh.y, SHOOTER.size) && sh.x > -50 && sh.x < room.level.pxWidth + 50 && sh.y < room.level.pxHeight + 50;
-  });
+  // Enemy shots and bombs fly, and stop at anything solid (shared with the client).
+  run.shots = E.stepShots(run.shots, dt, room.level, room.state);
   // Blaster shots: short range, destroy sentries, stun bosses.
-  run.bullets = run.bullets.filter((b) => {
-    const bx0 = b.x;
-    b.x += b.vx * playerDt; b.left -= Math.abs(b.vx * playerDt);
-    if (b.left <= 0 || hitsSolid(bx0, b.y, b.x, b.y, GUN.size)) return false;
+  run.bullets = E.stepBullets(run.bullets, playerDt, room.level, room.state).filter((b) => {
     const br = { x: b.x, y: b.y, w: GUN.size, h: GUN.size };
     for (const e of run.enemies) {
       if (e.dead || !overlaps(br, liveRect(e))) continue;
@@ -584,16 +537,8 @@ function updateEnemies(room, dt) {
   const hits = [];
   const a = run.acid;
   if (a) {
-    if (a.burning > 0) {
-      a.burning -= dt;
-      if (a.burning <= 0) { a.next = ACID.period - ACID.countdown - ACID.burn; }
-    } else if (a.countdown > 0) {
-      a.countdown -= dt;
-      if (a.countdown <= 0) { a.burning = ACID.burn; room.events.push({ type: 'acid' }); }
-    } else {
-      a.next -= dt;
-      if (a.next <= 0) { a.countdown = ACID.countdown; room.events.push({ type: 'countdown' }); }
-    }
+    const started = E.stepAcid(a, dt); // shared with the client
+    if (started) room.events.push({ type: started });
     if (a.burning > 0) {
       for (const r of ROLES) {
         const p = room.players[r];
@@ -650,25 +595,7 @@ function onRealGround(room, b) {
   return false;
 }
 
-// Walkers turn around instead of walking into boxes, mimics, closed gates, pulley
-// platforms or rock. Only new contact counts, so one a box was pushed into can leave.
-function walk(room, e, dt) {
-  const now = enemyRect(e);
-  const next = { ...now, x: now.x + e.dir * e.speed * dt };
-  if (blockedRects(room, next).some((o) => !overlaps(now, o))) { e.dir = -e.dir; return; }
-  e.x = next.x;
-}
-
-function blockedRects(room, r) {
-  const out = [];
-  const tx0 = Math.floor(r.x / T), tx1 = Math.floor((r.x + r.w - 0.001) / T);
-  const ty0 = Math.floor(r.y / T), ty1 = Math.floor((r.y + r.h - 0.001) / T);
-  for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) if (P.isSolid(room.level, tx, ty)) out.push({ x: tx * T, y: ty * T, w: T, h: T });
-  room.level.gates.forEach((g, i) => { if (!room.state.gates[i] && overlaps(r, g.rect)) out.push(g.rect); });
-  for (const p of P.platformRects(room.level, room.state)) if (overlaps(r, p)) out.push(p);
-  for (const b of room.state.boxes.concat(room.state.blocks || [])) if (overlaps(r, b)) out.push(b);
-  return out;
-}
+const blockedRects = (room, r) => E.blockedRects(room.level, room.state, r);
 
 // Standing on a pool of your own element (lava for fire, water for water)?
 function onOwnPool(level, body, role) {
@@ -771,9 +698,6 @@ function lastChanceTick(room, dt) {
   }
 }
 
-function liveRect(e) {
-  return e.type === 'flyer' ? { x: e.x, y: e.yNow ?? e.y, w: e.w, h: e.h } : enemyRect(e);
-}
 
 // Something would kill `role`. Returns true if they're saved: already safe (shielded,
 // or Last Chance's intangibility), Guardian (each player's first hit in a room: 1s
@@ -1172,7 +1096,7 @@ function use(room, role, slot = 1) {
     }
     case 'gun': {
       const dir = me.facing || 1;
-      run.bullets.push({ x: dir > 0 ? me.x + P.CHAR.width : me.x - GUN.size, y: me.y + 10, vx: dir * GUN.speed, left: GUN.range });
+      run.bullets.push({ id: ++run.shotId, x: dir > 0 ? me.x + P.CHAR.width : me.x - GUN.size, y: me.y + 10, vx: dir * GUN.speed, left: GUN.range });
       break;
     }
     case 'cloak': run.effects[role].cloakT = b.duration; break;
@@ -1228,18 +1152,15 @@ function view(room) {
     result: run.result,
     invuln: run.invuln,
     guardianReady: ROLES.filter((r) => run.items.some((i) => i.id === 'guardian') && !run.guardUsed[r]),
-    enemies: run.enemies.filter((e) => !e.dead).map((e) => {
-      const r = liveRect(e);
-      return {
-        type: e.type, x: r.x, y: r.y, w: r.w, h: r.h, stun: e.stunT > 0,
-        chest: !!e.chest, rare: !!e.rare,
-        phase: e.phase, shake: e.type === 'mimic' && e.shakeT > MIMIC.shakeEvery - MIMIC.shake, mode: e.mode, dir: e.dir,
-      };
-    }),
-    shots: run.shots.map((sh) => ({ x: sh.x, y: sh.y, kind: sh.kind })),
-    bullets: run.bullets.map((b) => ({ x: b.x, y: b.y })),
-    weather: run.weather && { kind: run.weather.kind, state: run.weather.state, t: run.weather.t, dur: run.weather.dur, level: run.weather.level },
-    acid: run.acid && { countdown: Math.max(0, run.acid.countdown), burning: run.acid.burning > 0 },
+    // Full enemy state: the client predicts the fixed-rule ones forward (shared/enemies.js)
+    // and smooths the rest between snapshots.
+    time: run.time,
+    slow: Math.pow(0.75, teamCount(run, 'slowtime')),
+    enemies: run.enemies.filter((e) => !e.dead).map(({ block, ...e }) => e),
+    shots: run.shots.map((sh) => ({ ...sh })),
+    bullets: run.bullets.map((b) => ({ ...b })),
+    weather: run.weather && { ...run.weather },
+    acid: run.acid && { ...run.acid },
   };
 }
 

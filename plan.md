@@ -60,7 +60,9 @@ Home ─► Create room / Join by code ─► Lobby (pick character, both tap Re
 - Clients send **input only**: `{seq, left, right, jump}` each tick.
 - The server sends snapshots at 20–30 Hz with the full level state (characters, plates, gates, platforms, boxes, gems, timer).
 - **Client-side prediction** for your own character: it moves immediately on input, then corrects to the server's position using the input sequence number. Without this, jumping feels laggy.
+- Snapshots go out every 2 server steps (30 Hz) and carry the server's step count (`st`). Clients place them by that count, not by arrival time, so bursty networks don't make others stutter.
 - The **other character** is shown about 100ms in the past, interpolated between two snapshots so it moves smoothly.
+- **Enemies (Challenge):** ones that follow fixed rules (sentry, flyer, walker, patrol, bomber, mimic, shooter, their shots and bombs, Blaster shots, the acid countdown and weather timers) are **predicted** with the same code as the server (`shared/enemies.js`), alongside your own character, so they line up with you exactly. Anything that reacts to players or uses chance (charger, burrower, when something fires or drops, who gets hit) stays on the server, and those enemies are interpolated like the other character. A new enemy type goes in `shared/enemies.js` if its movement follows fixed rules, otherwise it's interpolated.
 - **Events** (death, gem pickup, level complete) are sent reliably as separate messages so sounds and effects play exactly once.
 - **Reconnect:** each player gets a session token stored in `localStorage`. If they rejoin within 60s they get the same character back and the level pauses while they're away.
 

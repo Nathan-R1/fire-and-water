@@ -177,6 +177,7 @@ function restart(room) {
 
 // Advance one fixed physics step.
 function step(room) {
+  room.simTick = (room.simTick || 0) + 1; // every step, even paused: snapshots are stamped with it
   if (room.phase !== 'playing') discardInputs(room);
   if (room.phase === 'map' || room.phase === 'over') return; // challenge: between rooms / run ended
   if (room.phase === 'dead') {
@@ -280,6 +281,7 @@ function snapshot(room) {
     level: room.loadId,
     run: room.mode === 'challenge' ? C.view(room) : undefined,
     tick: room.tick,
+    st: room.simTick || 0, // server step count: the client lines snapshots up by it, not by arrival time
     phase: room.phase,
     timeMs: Math.round(room.tick * P.DT * 1000),
     gems: room.state.gems,
